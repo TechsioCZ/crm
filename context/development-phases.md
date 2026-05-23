@@ -3,6 +3,7 @@
 Datum: 2026-05-23
 Pocet fazi: 8
 Cil: po kazde fazi mit funkcni celek, ktery jde rucne overit.
+Aktualni stav: Faze 1-3 dokonceny (2026-05-23), faze 4-8 pending.
 
 ## Faze 1 - Zaklad projektu a prihlaseni
 ### Dodame
@@ -99,3 +100,4 @@ Cil: po kazde fazi mit funkcni celek, ktery jde rucne overit.
 2. Obchodnik vytvori ukol s terminem/prioritou.
 3. Obchodnik zkusi poznamku k cizimu zakaznikovi -> system odmitne.
 4. Over porovnani dvou stejne dlouhych obdobi a procentni zmenu obratu.
+

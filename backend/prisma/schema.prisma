@@ -1,0 +1,51 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  sales_rep
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(sales_rep)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customerAssignmentsAsSalesRep CustomerAssignment[] @relation("SalesRepAssignments")
+  customerAssignmentsAsAdmin    CustomerAssignment[] @relation("AssignedByAdmin")
+}
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments CustomerAssignment[]
+}
+
+model CustomerAssignment {
+  id         Int       @id @default(autoincrement())
+  customerId Int
+  salesRepId Int
+  assignedById Int?
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  salesRep   User     @relation("SalesRepAssignments", fields: [salesRepId], references: [id], onDelete: Restrict)
+  assignedBy User?    @relation("AssignedByAdmin", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@index([customerId, endedAt])
+  @@index([salesRepId, endedAt])
+}

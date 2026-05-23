@@ -1,7 +1,8 @@
 ﻿# CRM MVP - Rekapitulace Projektu
 
 Datum: 2026-05-23
-Status: Aktualni zdroj pravdy pro scope, stack a pripravenost prostredi.
+Status: Aktualni zdroj pravdy pro scope, stack, pripravenost prostredi a postup fazi.
+Postup: Faze 1-3 jsou dokoncene, faze 4-8 pending.
 
 ## 1) Cíl projektu
 Vytvorit MVP analytickeho CRM pro obchodniky, kde obchodnik:
@@ -57,3 +58,7 @@ Aktualni a zavazne dokumenty v `context/` jsou:
 3. `installation-gap-2026-05-23.md`
 4. `project-recap.md` (tento soubor)
 5. `development-phases.md`
+6. `phase-1-completion-2026-05-23.md`
+7. `phase-2-completion-2026-05-23.md`
+8. `phase-3-completion-2026-05-23.md`
+
