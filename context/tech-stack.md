@@ -7,7 +7,7 @@ Status: Schválený stack pro implementaci MVP analytického CRM
 
 ### Backend
 - Runtime: Node.js 24 LTS
-- Jazyk: TypeScript 5
+- Jazyk: TypeScript 6
 - Framework: Express 5
 - ORM: Prisma 6
 - Databáze: PostgreSQL 16+
@@ -17,13 +17,13 @@ Status: Schválený stack pro implementaci MVP analytického CRM
 
 ### Frontend
 - Framework: React 19
-- Jazyk: TypeScript 5
-- Build tool: Vite 7
+- Jazyk: TypeScript 6
+- Build tool: Vite 8
 - Stylování: CSS (možné rozšíření o Tailwind)
 - Zobrazení analytiky: React + charting knihovna (např. Recharts / Chart.js)
 
 ### Data a importy
-- Ruční XML import: parser na Node.js (`fast-xml-parser` nebo `xml2js`)
+- Ruční XML import: parser na Node.js (`fast-xml-parser`)
 - Idempotence importu: unikátní klíč `order_id` + upsert logika
 - Asynchronní zpracování: `pg-boss` worker nad PostgreSQL
 
@@ -38,7 +38,7 @@ Status: Schválený stack pro implementaci MVP analytického CRM
 - Node.js: >= 24.x
 - npm: >= 11.x
 - PostgreSQL: >= 16
-- TypeScript: >= 5.6
+- TypeScript: >= 6.0
 
 ## 3) Struktura projektu (doporučení)
 - `backend/` - Express API, Prisma schema, business logika, queue workers

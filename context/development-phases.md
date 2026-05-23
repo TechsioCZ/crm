@@ -3,7 +3,7 @@
 Datum: 2026-05-23
 Pocet fazi: 8
 Cil: po kazde fazi mit funkcni celek, ktery jde rucne overit.
-Aktualni stav: Faze 1-3 dokonceny (2026-05-23), faze 4-8 pending.
+Aktualni stav: Faze 1-4 dokonceny (2026-05-23), faze 5-8 pending.
 
 ## Faze 1 - Zaklad projektu a prihlaseni
 ### Dodame
@@ -41,7 +41,7 @@ Aktualni stav: Faze 1-3 dokonceny (2026-05-23), faze 4-8 pending.
 3. Zkus otevrit detail ciziho zakaznika -> pristup odmitnut.
 4. Prihlas se jako admin -> vidi vsechny zakazniky.
 
-## Faze 4 - XML import objednavek
+## Faze 4 - XML import objednavek (dokonceno 2026-05-23)
 ### Dodame
 - Rucni upload XML
 - Validace povinnych poli

@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import "./App.css";
 
@@ -56,7 +56,109 @@ type CustomerListItem = {
   isMine: boolean;
 };
 
+type ImportErrorItem = {
+  recordIndex: number;
+  orderIdValue: string | null;
+  customerIdValue: string | null;
+  message: string;
+};
+
+type ImportRun = {
+  id: number;
+  sourceName: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  totalRecords: number;
+  createdOrders: number;
+  updatedOrders: number;
+  errorRecords: number;
+};
+
+type ImportHistoryItem = ImportRun & {
+  triggeredBy: {
+    id: number;
+    name: string;
+    email: string;
+  } | null;
+  sampleErrors: Array<{
+    id: number;
+    recordIndex: number;
+    orderIdValue: string | null;
+    customerIdValue: string | null;
+    message: string;
+    createdAt: string;
+  }>;
+  totalErrorDetails: number;
+};
+
+type ImportResponse = {
+  message: string;
+  run: ImportRun;
+  createdOrderIds: string[];
+  updatedOrderIds: string[];
+  errors: ImportErrorItem[];
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
+
+const SAMPLE_XML_CREATE = `<orders>
+  <order>
+    <order_id>123</order_id>
+    <customer_id>1</customer_id>
+    <status>ceka na dodavatele</status>
+    <items>
+      <item>
+        <type>product</type>
+        <sku>RUK-001</sku>
+        <name>Rukavice</name>
+        <category>Ochrana</category>
+        <quantity>2</quantity>
+        <unit_price_net_czk>500</unit_price_net_czk>
+        <line_net_czk>1000</line_net_czk>
+      </item>
+      <item>
+        <type>shipping</type>
+        <name>Doprava</name>
+        <quantity>1</quantity>
+        <unit_price_net_czk>150</unit_price_net_czk>
+        <line_net_czk>150</line_net_czk>
+      </item>
+    </items>
+  </order>
+</orders>`;
+
+const SAMPLE_XML_UPDATE = `<orders>
+  <order>
+    <order_id>123</order_id>
+    <customer_id>1</customer_id>
+    <status>v preprave</status>
+    <items>
+      <item>
+        <type>product</type>
+        <sku>RUK-001</sku>
+        <name>Rukavice</name>
+        <category>Ochrana</category>
+        <quantity>2</quantity>
+        <unit_price_net_czk>500</unit_price_net_czk>
+        <line_net_czk>1000</line_net_czk>
+      </item>
+      <item>
+        <type>payment</type>
+        <name>Platba kartou</name>
+        <quantity>1</quantity>
+        <unit_price_net_czk>50</unit_price_net_czk>
+        <line_net_czk>50</line_net_czk>
+      </item>
+    </items>
+  </order>
+</orders>`;
+
+const SAMPLE_XML_INVALID = `<orders>
+  <order>
+    <order_id>999</order_id>
+    <status>nova</status>
+  </order>
+</orders>`;
 
 function App() {
   const [email, setEmail] = useState("admin@crm.local");
@@ -80,6 +182,13 @@ function App() {
   const [manualCustomerId, setManualCustomerId] = useState("2");
   const [customerDetail, setCustomerDetail] = useState<Customer | null>(null);
   const [customerMessage, setCustomerMessage] = useState("Customer panel not loaded yet.");
+
+  const [importSourceName, setImportSourceName] = useState("manual-xml-demo");
+  const [xmlPayload, setXmlPayload] = useState(SAMPLE_XML_CREATE);
+  const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
+  const [latestImport, setLatestImport] = useState<ImportResponse | null>(null);
+  const [importMessage, setImportMessage] = useState("Import panel not loaded yet.");
+  const [isImporting, setIsImporting] = useState(false);
 
   const isLoggedIn = useMemo(() => Boolean(token), [token]);
   const isAdmin = user?.role === "admin";
@@ -218,6 +327,27 @@ function App() {
     }
   };
 
+  const loadImportHistory = async (accessToken: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/imports`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      });
+
+      if (!response.ok) {
+        setImportMessage(`Import history failed (${response.status}).`);
+        return;
+      }
+
+      const body = (await response.json()) as { imports: ImportHistoryItem[] };
+      setImportHistory(body.imports);
+      setImportMessage(`Import history loaded (${body.imports.length} runs).`);
+    } catch {
+      setImportMessage("Failed to load import history.");
+    }
+  };
+
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAuthMessage("Logging in...");
@@ -247,6 +377,7 @@ function App() {
 
       if (body.user.role === "admin") {
         await loadAdminData(body.accessToken);
+        await loadImportHistory(body.accessToken);
       }
     } catch {
       setToken(null);
@@ -290,9 +421,12 @@ function App() {
     setVisibleCustomers([]);
     setSelectedVisibleCustomerId(null);
     setCustomerDetail(null);
+    setImportHistory([]);
+    setLatestImport(null);
     setAuthMessage("Logged out");
     setAdminMessage("Admin panel not loaded yet.");
     setCustomerMessage("Customer panel not loaded yet.");
+    setImportMessage("Import panel not loaded yet.");
   };
 
   const handleAssign = async (customerId: number) => {
@@ -365,12 +499,60 @@ function App() {
     await loadCustomerDetail(token, id);
   };
 
+  const handleRunXmlImport = async () => {
+    if (!token) {
+      setImportMessage("Please login first.");
+      return;
+    }
+
+    if (!xmlPayload.trim()) {
+      setImportMessage("XML payload cannot be empty.");
+      return;
+    }
+
+    setIsImporting(true);
+    setImportMessage("Running XML import...");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/imports/orders/xml`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          sourceName: importSourceName.trim() || "manual-xml",
+          xml: xmlPayload
+        })
+      });
+
+      const raw = (await response.json()) as Partial<ImportResponse> & { message?: string };
+
+      if (!response.ok) {
+        setImportMessage(raw.message ?? `Import failed (${response.status}).`);
+        return;
+      }
+
+      const importResponse = raw as ImportResponse;
+      setLatestImport(importResponse);
+      setImportMessage(
+        `Import done: created ${importResponse.run.createdOrders}, updated ${importResponse.run.updatedOrders}, errors ${importResponse.run.errorRecords}.`
+      );
+
+      await loadImportHistory(token);
+    } catch {
+      setImportMessage("Import request failed.");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <main className="page">
       <header className="hero">
-        <p className="eyebrow">Phase 3</p>
-        <h1>CRM MVP Access + Visibility Check</h1>
-        <p className="subtitle">Validate auth, assignment history, and role-based customer visibility.</p>
+        <p className="eyebrow">Phase 4</p>
+        <h1>CRM MVP Access + Import Check</h1>
+        <p className="subtitle">Validate auth, assignment history, role visibility, and XML order imports.</p>
       </header>
 
       <section className="status-grid" aria-label="service status">
@@ -536,6 +718,110 @@ function App() {
                 </article>
               );
             })}
+          </div>
+        </section>
+      )}
+
+      {isAdmin && (
+        <section className="panel" aria-label="xml import panel">
+          <div className="admin-head">
+            <h2>XML Import Panel</h2>
+            <button type="button" onClick={() => token && loadImportHistory(token)}>
+              Refresh import history
+            </button>
+          </div>
+
+          <p className="message">{importMessage}</p>
+
+          <div className="actions">
+            <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_CREATE)}>
+              Load sample: create
+            </button>
+            <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_UPDATE)}>
+              Load sample: update
+            </button>
+            <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_INVALID)}>
+              Load sample: invalid
+            </button>
+          </div>
+
+          <label>
+            Source name
+            <input value={importSourceName} onChange={(e) => setImportSourceName(e.target.value)} />
+          </label>
+
+          <label>
+            XML payload
+            <textarea
+              className="xml-editor"
+              value={xmlPayload}
+              onChange={(e) => setXmlPayload(e.target.value)}
+              rows={16}
+            />
+          </label>
+
+          <div className="actions">
+            <button type="button" onClick={handleRunXmlImport} disabled={isImporting}>
+              {isImporting ? "Importing..." : "Run XML import"}
+            </button>
+          </div>
+
+          {latestImport && (
+            <article className="customer-card">
+              <h3>Latest import run #{latestImport.run.id}</h3>
+              <p>
+                Totals: <strong>{latestImport.run.totalRecords}</strong> records, created{" "}
+                <strong>{latestImport.run.createdOrders}</strong>, updated <strong>{latestImport.run.updatedOrders}</strong>,
+                errors <strong>{latestImport.run.errorRecords}</strong>.
+              </p>
+              <p>
+                Created order IDs: <strong>{latestImport.createdOrderIds.join(", ") || "-"}</strong>
+              </p>
+              <p>
+                Updated order IDs: <strong>{latestImport.updatedOrderIds.join(", ") || "-"}</strong>
+              </p>
+              <details>
+                <summary>Error details ({latestImport.errors.length})</summary>
+                <ul className="history-list">
+                  {latestImport.errors.map((error) => (
+                    <li key={`${error.recordIndex}-${error.message}`}>
+                      Record {error.recordIndex}: {error.message}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </article>
+          )}
+
+          <div className="customer-list">
+            {importHistory.map((run) => (
+              <article className="customer-card" key={run.id}>
+                <h3>
+                  Import #{run.id} ({run.sourceName ?? "manual-xml"})
+                </h3>
+                <p>
+                  Created: <strong>{run.createdOrders}</strong> | Updated: <strong>{run.updatedOrders}</strong> | Errors:{" "}
+                  <strong>{run.errorRecords}</strong>
+                </p>
+                <p>
+                  Triggered by: <strong>{run.triggeredBy?.email ?? "unknown"}</strong>
+                </p>
+                <p>
+                  Started: {new Date(run.startedAt).toLocaleString()} | Finished:{" "}
+                  {run.finishedAt ? new Date(run.finishedAt).toLocaleString() : "running"}
+                </p>
+                <details>
+                  <summary>Sample errors ({run.totalErrorDetails})</summary>
+                  <ul className="history-list">
+                    {run.sampleErrors.map((error) => (
+                      <li key={error.id}>
+                        Record {error.recordIndex}: {error.message}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </article>
+            ))}
           </div>
         </section>
       )}

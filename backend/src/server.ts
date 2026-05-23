@@ -42,6 +42,8 @@ app.get("/", (_req, res) => {
       db: "/api/health/db",
       login: "POST /api/auth/login",
       adminCustomers: "GET /api/admin/customers",
+      adminXmlImport: "POST /api/admin/imports/orders/xml",
+      adminImportHistory: "GET /api/admin/imports",
       roleCustomers: "GET /api/customers"
     }
   });

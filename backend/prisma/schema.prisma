@@ -12,6 +12,13 @@ enum Role {
   sales_rep
 }
 
+enum OrderItemType {
+  product
+  shipping
+  payment
+  other
+}
+
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique
@@ -23,6 +30,7 @@ model User {
 
   customerAssignmentsAsSalesRep CustomerAssignment[] @relation("SalesRepAssignments")
   customerAssignmentsAsAdmin    CustomerAssignment[] @relation("AssignedByAdmin")
+  importRunsTriggered           ImportRun[]          @relation("ImportTriggeredBy")
 }
 
 model Customer {
@@ -32,6 +40,7 @@ model Customer {
   updatedAt DateTime @updatedAt
 
   assignments CustomerAssignment[]
+  orders      Order[]
 }
 
 model CustomerAssignment {
@@ -48,4 +57,72 @@ model CustomerAssignment {
 
   @@index([customerId, endedAt])
   @@index([salesRepId, endedAt])
+}
+
+model Order {
+  id         Int      @id @default(autoincrement())
+  orderId    String   @unique
+  customerId Int
+  status     String
+  importedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customer Customer    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  items    OrderItem[]
+
+  @@index([customerId, importedAt])
+}
+
+model OrderItem {
+  id             Int           @id @default(autoincrement())
+  orderDbId      Int
+  lineType       OrderItemType @default(product)
+  sku            String?
+  name           String?
+  category       String?
+  quantity       Decimal       @db.Decimal(12, 3)
+  unitPriceNetCzk Decimal      @db.Decimal(14, 2)
+  lineNetCzk     Decimal       @db.Decimal(14, 2)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  order Order @relation(fields: [orderDbId], references: [id], onDelete: Cascade)
+
+  @@index([orderDbId])
+  @@index([lineType])
+}
+
+model ImportRun {
+  id            Int      @id @default(autoincrement())
+  sourceName    String?
+  triggeredById Int?
+  startedAt     DateTime @default(now())
+  finishedAt    DateTime?
+  totalRecords  Int      @default(0)
+  createdOrders Int      @default(0)
+  updatedOrders Int      @default(0)
+  errorRecords  Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  triggeredBy User?            @relation("ImportTriggeredBy", fields: [triggeredById], references: [id], onDelete: SetNull)
+  errors      ImportRunError[]
+
+  @@index([startedAt])
+}
+
+model ImportRunError {
+  id             Int      @id @default(autoincrement())
+  importRunId    Int
+  recordIndex    Int
+  orderIdValue   String?
+  customerIdValue String?
+  message        String
+  rawRecord      Json?
+  createdAt      DateTime @default(now())
+
+  importRun ImportRun @relation(fields: [importRunId], references: [id], onDelete: Cascade)
+
+  @@index([importRunId, recordIndex])
 }

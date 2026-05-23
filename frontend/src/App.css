@@ -98,12 +98,17 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   border: 1px solid #bda983;
   border-radius: 10px;
   padding: 0.65rem 0.75rem;
   font: inherit;
   background: #fff;
+}
+
+textarea {
+  resize: vertical;
 }
 
 button {
@@ -186,4 +191,9 @@ button:disabled {
 
 code {
   font-family: "IBM Plex Mono", Consolas, monospace;
+}
+
+.xml-editor {
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  min-height: 260px;
 }
