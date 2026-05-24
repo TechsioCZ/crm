@@ -1,9 +1,9 @@
 ﻿# CRM MVP - Faze Vyvoje (s manualnim testem po kazde fazi)
 
-Datum: 2026-05-23
+Datum: 2026-05-24
 Pocet fazi: 8
 Cil: po kazde fazi mit funkcni celek, ktery jde rucne overit.
-Aktualni stav: Faze 1-4 dokonceny (2026-05-23), faze 5-8 pending.
+Aktualni stav: Faze 1-5 dokonceny (2026-05-24), faze 6-8 pending.
 
 ## Faze 1 - Zaklad projektu a prihlaseni
 ### Dodame
@@ -53,7 +53,7 @@ Aktualni stav: Faze 1-4 dokonceny (2026-05-23), faze 5-8 pending.
 2. Nahraj XML se stejnym `order_id` a jinym stavem -> aktualizuje se, nevznika duplicita.
 3. Nahraj chybne XML bez customer ID -> zaznam chyby v historii importu.
 
-## Faze 5 - Produktova analytika (obrat)
+## Faze 5 - Produktova analytika (obrat) (dokonceno 2026-05-24)
 ### Dodame
 - Vypocet obratu z produktovych polozek bez DPH
 - Vylouceni dopravy a platby

@@ -99,6 +99,42 @@ type ImportResponse = {
   errors: ImportErrorItem[];
 };
 
+type ProductAnalyticsResponse = {
+  period: {
+    from: string;
+    to: string;
+    fromUtc: string;
+    toUtc: string;
+  };
+  customer: {
+    id: number;
+    name: string;
+  };
+  totals: {
+    ordersCount: number;
+    itemLinesCount: number;
+    productItemLinesCount: number;
+    productNetCzk: string;
+    shippingNetCzk: string;
+    paymentNetCzk: string;
+    otherNetCzk: string;
+    allItemLinesNetCzk: string;
+  };
+  productBreakdown: Array<{
+    key: string;
+    sku: string | null;
+    name: string | null;
+    category: string | null;
+    turnoverNetCzk: string;
+    lineCount: number;
+  }>;
+  categoryBreakdown: Array<{
+    category: string;
+    turnoverNetCzk: string;
+    lineCount: number;
+  }>;
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 
 const SAMPLE_XML_CREATE = `<orders>
@@ -190,6 +226,12 @@ function App() {
   const [importMessage, setImportMessage] = useState("Import panel not loaded yet.");
   const [isImporting, setIsImporting] = useState(false);
 
+  const [analyticsFrom, setAnalyticsFrom] = useState("2026-01-01");
+  const [analyticsTo, setAnalyticsTo] = useState("2026-12-31");
+  const [analyticsMessage, setAnalyticsMessage] = useState("Analytics panel not loaded yet.");
+  const [analyticsResult, setAnalyticsResult] = useState<ProductAnalyticsResponse | null>(null);
+  const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
+
   const isLoggedIn = useMemo(() => Boolean(token), [token]);
   const isAdmin = user?.role === "admin";
 
@@ -238,6 +280,7 @@ function App() {
 
       const body = (await response.json()) as { customers: CustomerListItem[] };
       setVisibleCustomers(body.customers);
+      setAnalyticsResult(null);
 
       if (body.customers.length > 0) {
         const id = body.customers[0].id;
@@ -282,6 +325,58 @@ function App() {
     } catch {
       setCustomerDetail(null);
       setCustomerMessage("Customer detail request failed.");
+    }
+  };
+
+  const loadProductAnalytics = async (accessToken: string, customerId: number) => {
+    if (!analyticsFrom || !analyticsTo) {
+      setAnalyticsMessage("Please choose both dates first.");
+      return;
+    }
+
+    if (analyticsFrom > analyticsTo) {
+      setAnalyticsMessage("`From` date must be before `To` date.");
+      return;
+    }
+
+    setIsAnalyticsLoading(true);
+
+    try {
+      const query = new URLSearchParams({
+        from: analyticsFrom,
+        to: analyticsTo
+      });
+
+      const response = await fetch(`${API_BASE_URL}/api/customers/${customerId}/analytics/product?${query.toString()}`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      if (!response.ok) {
+        setAnalyticsResult(null);
+        if (response.status === 403) {
+          setAnalyticsMessage(`Analytics blocked for customer ${customerId} (403).`);
+          return;
+        }
+
+        if (response.status === 404) {
+          setAnalyticsMessage(`Customer ${customerId} not found (404).`);
+          return;
+        }
+
+        setAnalyticsMessage(`Analytics request failed (${response.status}).`);
+        return;
+      }
+
+      const body = (await response.json()) as ProductAnalyticsResponse;
+      setAnalyticsResult(body);
+      setAnalyticsMessage(
+        `Analytics loaded for ${body.customer.name}: product turnover ${body.totals.productNetCzk} CZK (net).`
+      );
+    } catch {
+      setAnalyticsResult(null);
+      setAnalyticsMessage("Analytics request failed.");
+    } finally {
+      setIsAnalyticsLoading(false);
     }
   };
 
@@ -421,11 +516,13 @@ function App() {
     setVisibleCustomers([]);
     setSelectedVisibleCustomerId(null);
     setCustomerDetail(null);
+    setAnalyticsResult(null);
     setImportHistory([]);
     setLatestImport(null);
     setAuthMessage("Logged out");
     setAdminMessage("Admin panel not loaded yet.");
     setCustomerMessage("Customer panel not loaded yet.");
+    setAnalyticsMessage("Analytics panel not loaded yet.");
     setImportMessage("Import panel not loaded yet.");
   };
 
@@ -499,6 +596,30 @@ function App() {
     await loadCustomerDetail(token, id);
   };
 
+  const handleLoadSelectedAnalytics = async () => {
+    if (!token || !selectedVisibleCustomerId) {
+      setAnalyticsMessage("No customer selected.");
+      return;
+    }
+
+    await loadProductAnalytics(token, selectedVisibleCustomerId);
+  };
+
+  const handleLoadManualAnalytics = async () => {
+    if (!token) {
+      setAnalyticsMessage("Please login first.");
+      return;
+    }
+
+    const id = Number(manualCustomerId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setAnalyticsMessage("Customer id must be a positive integer.");
+      return;
+    }
+
+    await loadProductAnalytics(token, id);
+  };
+
   const handleRunXmlImport = async () => {
     if (!token) {
       setImportMessage("Please login first.");
@@ -550,9 +671,9 @@ function App() {
   return (
     <main className="page">
       <header className="hero">
-        <p className="eyebrow">Phase 4</p>
-        <h1>CRM MVP Access + Import Check</h1>
-        <p className="subtitle">Validate auth, assignment history, role visibility, and XML order imports.</p>
+        <p className="eyebrow">Phase 5</p>
+        <h1>CRM MVP Access + Product Analytics Check</h1>
+        <p className="subtitle">Validate auth, visibility, XML imports, and product turnover analytics.</p>
       </header>
 
       <section className="status-grid" aria-label="service status">
@@ -652,6 +773,84 @@ function App() {
                     <li key={item.id}>
                       {item.salesRep.name}: {new Date(item.startedAt).toLocaleString()} -{" "}
                       {item.endedAt ? new Date(item.endedAt).toLocaleString() : "active"}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </article>
+          )}
+        </section>
+      )}
+
+      {isLoggedIn && (
+        <section className="panel" aria-label="product analytics panel">
+          <div className="admin-head">
+            <h2>Product Analytics Panel</h2>
+            <button type="button" onClick={handleLoadSelectedAnalytics} disabled={isAnalyticsLoading}>
+              {isAnalyticsLoading ? "Loading..." : "Load selected analytics"}
+            </button>
+          </div>
+
+          <p className="message">{analyticsMessage}</p>
+
+          <div className="date-row">
+            <label>
+              From date
+              <input type="date" value={analyticsFrom} onChange={(e) => setAnalyticsFrom(e.target.value)} />
+            </label>
+            <label>
+              To date
+              <input type="date" value={analyticsTo} onChange={(e) => setAnalyticsTo(e.target.value)} />
+            </label>
+          </div>
+
+          <div className="assign-row">
+            <button type="button" onClick={handleLoadSelectedAnalytics} disabled={isAnalyticsLoading}>
+              Analytics for selected customer
+            </button>
+            <button type="button" onClick={handleLoadManualAnalytics} disabled={isAnalyticsLoading}>
+              Analytics by manual ID
+            </button>
+          </div>
+
+          {analyticsResult && (
+            <article className="customer-card">
+              <h3>
+                {analyticsResult.customer.name} ({analyticsResult.customer.id})
+              </h3>
+              <p>
+                Period: <strong>{analyticsResult.period.from}</strong> to <strong>{analyticsResult.period.to}</strong>
+              </p>
+              <p>
+                Product turnover (net CZK): <strong>{analyticsResult.totals.productNetCzk}</strong>
+              </p>
+              <p>
+                Shipping excluded: <strong>{analyticsResult.totals.shippingNetCzk}</strong> | Payment excluded:{" "}
+                <strong>{analyticsResult.totals.paymentNetCzk}</strong>
+              </p>
+              <p>
+                Orders: <strong>{analyticsResult.totals.ordersCount}</strong> | Item lines:{" "}
+                <strong>{analyticsResult.totals.itemLinesCount}</strong>
+              </p>
+
+              <details>
+                <summary>Product breakdown ({analyticsResult.productBreakdown.length})</summary>
+                <ul className="history-list">
+                  {analyticsResult.productBreakdown.map((product) => (
+                    <li key={product.key}>
+                      {product.name ?? product.sku ?? "Unnamed product"} ({product.category ?? "Uncategorized"}):{" "}
+                      {product.turnoverNetCzk} CZK
+                    </li>
+                  ))}
+                </ul>
+              </details>
+
+              <details>
+                <summary>Category breakdown ({analyticsResult.categoryBreakdown.length})</summary>
+                <ul className="history-list">
+                  {analyticsResult.categoryBreakdown.map((category) => (
+                    <li key={category.category}>
+                      {category.category}: {category.turnoverNetCzk} CZK
                     </li>
                   ))}
                 </ul>

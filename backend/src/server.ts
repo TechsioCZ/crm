@@ -44,7 +44,8 @@ app.get("/", (_req, res) => {
       adminCustomers: "GET /api/admin/customers",
       adminXmlImport: "POST /api/admin/imports/orders/xml",
       adminImportHistory: "GET /api/admin/imports",
-      roleCustomers: "GET /api/customers"
+      roleCustomers: "GET /api/customers",
+      customerProductAnalytics: "GET /api/customers/:customerId/analytics/product?from=YYYY-MM-DD&to=YYYY-MM-DD"
     }
   });
 });

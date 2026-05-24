@@ -178,6 +178,13 @@ button:disabled {
   margin-bottom: 0.6rem;
 }
 
+.date-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.6rem;
+  margin: 0.8rem 0;
+}
+
 .history-list {
   margin: 0.5rem 0 0;
   padding-left: 1.2rem;
