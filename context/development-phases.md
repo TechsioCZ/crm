@@ -3,7 +3,7 @@
 Datum: 2026-05-24
 Pocet fazi: 8
 Cil: po kazde fazi mit funkcni celek, ktery jde rucne overit.
-Aktualni stav: Faze 1-6 dokonceny (2026-05-24), faze 7-8 pending.
+Aktualni stav: Faze 1-7 dokonceny (2026-05-24), faze 8 pending.
 
 ## Faze 1 - Zaklad projektu a prihlaseni
 ### Dodame
@@ -77,7 +77,7 @@ Aktualni stav: Faze 1-6 dokonceny (2026-05-24), faze 7-8 pending.
 3. Over zobrazeni nekupovane kategorie.
 4. Nastav 10 top produktu, zakaznik ma 3 -> over penetraci 30 %.
 
-## Faze 7 - Skupiny a doporucovaci pravidla
+## Faze 7 - Skupiny a doporucovaci pravidla (dokonceno 2026-05-24)
 ### Dodame
 - Ukladane filtry skupin zakazniku
 - Globalni pravidla (admin) a osobni pravidla (obchodnik)

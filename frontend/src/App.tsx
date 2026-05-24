@@ -158,6 +158,54 @@ type ProductAnalyticsResponse = {
   };
 };
 
+type RecommendationGroup = {
+  id: number;
+  name: string;
+  scope: "global" | "private";
+  filterType: "active_orders_last_months";
+  monthsBack: number;
+  owner: {
+    id: number;
+    role: UserRole;
+    name: string;
+    email: string;
+  } | null;
+  totalMembers: number;
+  visibleMembers: number;
+};
+
+type RecommendationRule = {
+  id: number;
+  name: string;
+  scope: "global" | "private";
+  targetType: "category" | "top_product";
+  targetValue: string;
+  minPenetrationPct: string;
+  isActive: boolean;
+  group: {
+    id: number;
+    name: string;
+    scope: "global" | "private";
+  };
+  comparisonGroup: {
+    id: number;
+    name: string;
+    scope: "global" | "private";
+  } | null;
+};
+
+type RecommendationOpportunity = {
+  ruleId: number;
+  ruleName: string;
+  ruleScope: "global" | "private";
+  targetType: "category" | "top_product";
+  targetValue: string;
+  customerId: number;
+  customerName: string;
+  comparisonPenetrationPct: string;
+  minPenetrationPct: string;
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 
 const SAMPLE_XML_CREATE = `<orders>
@@ -293,6 +341,29 @@ function App() {
   const [analyticsResult, setAnalyticsResult] = useState<ProductAnalyticsResponse | null>(null);
   const [isAnalyticsLoading, setIsAnalyticsLoading] = useState(false);
 
+  const [groups, setGroups] = useState<RecommendationGroup[]>([]);
+  const [rules, setRules] = useState<RecommendationRule[]>([]);
+  const [opportunities, setOpportunities] = useState<RecommendationOpportunity[]>([]);
+  const [customerRecommendations, setCustomerRecommendations] = useState<RecommendationOpportunity[]>([]);
+  const [recommendationMessage, setRecommendationMessage] = useState("Recommendations panel not loaded yet.");
+  const [groupMessage, setGroupMessage] = useState("No group action yet.");
+  const [ruleMessage, setRuleMessage] = useState("No rule action yet.");
+  const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
+  const [isGroupSubmitting, setIsGroupSubmitting] = useState(false);
+  const [isRuleSubmitting, setIsRuleSubmitting] = useState(false);
+
+  const [groupName, setGroupName] = useState("Aktivni ordinace");
+  const [groupScope, setGroupScope] = useState<"global" | "private">("global");
+  const [groupMonthsBack, setGroupMonthsBack] = useState("12");
+
+  const [ruleName, setRuleName] = useState("Doporucit Profylaxi");
+  const [ruleScope, setRuleScope] = useState<"global" | "private">("global");
+  const [ruleTargetType, setRuleTargetType] = useState<"category" | "top_product">("category");
+  const [ruleTargetValue, setRuleTargetValue] = useState("Profylaxe");
+  const [ruleMinPenetrationPct, setRuleMinPenetrationPct] = useState("30");
+  const [ruleGroupId, setRuleGroupId] = useState<number | null>(null);
+  const [ruleComparisonGroupId, setRuleComparisonGroupId] = useState<number | null>(null);
+
   const isLoggedIn = useMemo(() => Boolean(token), [token]);
   const isAdmin = user?.role === "admin";
 
@@ -328,7 +399,7 @@ function App() {
     });
   }, []);
 
-  const loadVisibleCustomers = async (accessToken: string) => {
+  const loadVisibleCustomers = async (accessToken: string): Promise<number | null> => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/customers`, {
         headers: { Authorization: `Bearer ${accessToken}` }
@@ -336,7 +407,7 @@ function App() {
 
       if (!response.ok) {
         setCustomerMessage(`Customer list failed (${response.status}).`);
-        return;
+        return null;
       }
 
       const body = (await response.json()) as { customers: CustomerListItem[] };
@@ -347,14 +418,19 @@ function App() {
         const id = body.customers[0].id;
         setSelectedVisibleCustomerId(id);
         await loadCustomerDetail(accessToken, id);
+        setCustomerMessage(`Loaded ${body.customers.length} visible customers.`);
+        return id;
       } else {
         setSelectedVisibleCustomerId(null);
         setCustomerDetail(null);
+        setCustomerRecommendations([]);
       }
 
       setCustomerMessage(`Loaded ${body.customers.length} visible customers.`);
+      return null;
     } catch {
       setCustomerMessage("Failed to load visible customers.");
+      return null;
     }
   };
 
@@ -438,6 +514,159 @@ function App() {
       setAnalyticsMessage("Analytics request failed.");
     } finally {
       setIsAnalyticsLoading(false);
+    }
+  };
+
+  const loadRecommendationGroups = async (accessToken: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/recommendations/groups`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      });
+
+      if (!response.ok) {
+        setRecommendationMessage(`Groups request failed (${response.status}).`);
+        return;
+      }
+
+      const body = (await response.json()) as { groups: RecommendationGroup[] };
+      setGroups(body.groups);
+      setRuleGroupId((prev) => {
+        if (body.groups.length === 0) {
+          return null;
+        }
+        if (prev && body.groups.some((group) => group.id === prev)) {
+          return prev;
+        }
+        return body.groups[0].id;
+      });
+      setRuleComparisonGroupId((prev) => {
+        if (body.groups.length === 0) {
+          return null;
+        }
+        if (prev && body.groups.some((group) => group.id === prev)) {
+          return prev;
+        }
+        return null;
+      });
+      setRecommendationMessage(`Loaded ${body.groups.length} groups.`);
+    } catch {
+      setRecommendationMessage("Failed to load recommendation groups.");
+    }
+  };
+
+  const loadRecommendationRules = async (accessToken: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/recommendations/rules`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      });
+
+      if (!response.ok) {
+        setRecommendationMessage(`Rules request failed (${response.status}).`);
+        return;
+      }
+
+      const body = (await response.json()) as { rules: RecommendationRule[] };
+      setRules(body.rules);
+      setRecommendationMessage(`Loaded ${body.rules.length} rules.`);
+    } catch {
+      setRecommendationMessage("Failed to load recommendation rules.");
+    }
+  };
+
+  const loadRecommendationOpportunities = async (accessToken: string, customerId?: number) => {
+    setIsRecommendationLoading(true);
+    try {
+      const query = new URLSearchParams();
+      if (customerId) {
+        query.set("customerId", String(customerId));
+      }
+
+      const suffix = query.toString() ? `?${query.toString()}` : "";
+      const response = await fetch(`${API_BASE_URL}/api/recommendations/opportunities${suffix}`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      });
+
+      if (!response.ok) {
+        setRecommendationMessage(`Opportunities request failed (${response.status}).`);
+        setOpportunities([]);
+        return;
+      }
+
+      const body = (await response.json()) as {
+        opportunities: RecommendationOpportunity[];
+        summary: {
+          visibleRules: number;
+          visibleOpportunities: number;
+        };
+      };
+
+      setOpportunities(body.opportunities);
+      setRecommendationMessage(
+        `Loaded ${body.summary.visibleOpportunities} opportunities from ${body.summary.visibleRules} visible rules.`
+      );
+    } catch {
+      setOpportunities([]);
+      setRecommendationMessage("Failed to load recommendation opportunities.");
+    } finally {
+      setIsRecommendationLoading(false);
+    }
+  };
+
+  const loadCustomerRecommendations = async (accessToken: string, customerId: number) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/recommendations/customers/${customerId}`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      });
+
+      if (!response.ok) {
+        if (response.status === 403) {
+          setRecommendationMessage(`Recommendations blocked for customer ${customerId} (403).`);
+        } else if (response.status === 404) {
+          setRecommendationMessage(`Customer ${customerId} not found for recommendations.`);
+        } else {
+          setRecommendationMessage(`Customer recommendations failed (${response.status}).`);
+        }
+        setCustomerRecommendations([]);
+        return;
+      }
+
+      const body = (await response.json()) as {
+        customer: {
+          id: number;
+          name: string;
+        };
+        recommendations: Array<{
+          ruleId: number;
+          ruleName: string;
+          ruleScope: "global" | "private";
+          targetType: "category" | "top_product";
+          targetValue: string;
+          comparisonPenetrationPct: string;
+          minPenetrationPct: string;
+        }>;
+      };
+
+      const mapped = body.recommendations.map((item) => ({
+        ...item,
+        customerId: body.customer.id,
+        customerName: body.customer.name
+      }));
+
+      setCustomerRecommendations(mapped);
+      setRecommendationMessage(
+        `Customer ${body.customer.name} has ${body.recommendations.length} recommendation opportunities.`
+      );
+    } catch {
+      setCustomerRecommendations([]);
+      setRecommendationMessage("Failed to load customer recommendations.");
     }
   };
 
@@ -529,7 +758,13 @@ function App() {
       setUser(body.user);
       setAuthMessage(`Logged in as ${body.user.email} (${body.user.role})`);
 
-      await loadVisibleCustomers(body.accessToken);
+      const firstVisibleCustomerId = await loadVisibleCustomers(body.accessToken);
+      await loadRecommendationGroups(body.accessToken);
+      await loadRecommendationRules(body.accessToken);
+      await loadRecommendationOpportunities(body.accessToken);
+      if (firstVisibleCustomerId) {
+        await loadCustomerRecommendations(body.accessToken, firstVisibleCustomerId);
+      }
 
       if (body.user.role === "admin") {
         await loadAdminData(body.accessToken);
@@ -580,11 +815,18 @@ function App() {
     setAnalyticsResult(null);
     setImportHistory([]);
     setLatestImport(null);
+    setGroups([]);
+    setRules([]);
+    setOpportunities([]);
+    setCustomerRecommendations([]);
     setAuthMessage("Logged out");
     setAdminMessage("Admin panel not loaded yet.");
     setCustomerMessage("Customer panel not loaded yet.");
     setAnalyticsMessage("Analytics panel not loaded yet.");
     setImportMessage("Import panel not loaded yet.");
+    setRecommendationMessage("Recommendations panel not loaded yet.");
+    setGroupMessage("No group action yet.");
+    setRuleMessage("No rule action yet.");
   };
 
   const handleAssign = async (customerId: number) => {
@@ -621,7 +863,13 @@ function App() {
       setCustomers((prev) => prev.map((item) => (item.id === body.customer.id ? body.customer : item)));
 
       await loadAdminData(token);
-      await loadVisibleCustomers(token);
+      const firstVisibleCustomerId = await loadVisibleCustomers(token);
+      await loadRecommendationGroups(token);
+      await loadRecommendationRules(token);
+      await loadRecommendationOpportunities(token);
+      if (firstVisibleCustomerId) {
+        await loadCustomerRecommendations(token, firstVisibleCustomerId);
+      }
 
       if (body.changed) {
         setAdminMessage(`Assignment updated for ${body.customer.name}.`);
@@ -640,6 +888,7 @@ function App() {
     }
 
     await loadCustomerDetail(token, selectedVisibleCustomerId);
+    await loadCustomerRecommendations(token, selectedVisibleCustomerId);
   };
 
   const handleLoadManualDetail = async () => {
@@ -655,6 +904,7 @@ function App() {
     }
 
     await loadCustomerDetail(token, id);
+    await loadCustomerRecommendations(token, id);
   };
 
   const handleLoadSelectedAnalytics = async () => {
@@ -729,12 +979,185 @@ function App() {
     }
   };
 
+  const handleRefreshRecommendations = async () => {
+    if (!token) {
+      setRecommendationMessage("Please login first.");
+      return;
+    }
+
+    await loadRecommendationGroups(token);
+    await loadRecommendationRules(token);
+    await loadRecommendationOpportunities(token);
+
+    if (selectedVisibleCustomerId) {
+      await loadCustomerRecommendations(token, selectedVisibleCustomerId);
+    }
+  };
+
+  const handleCreateGroup = async () => {
+    if (!token) {
+      setGroupMessage("Please login first.");
+      return;
+    }
+
+    const monthsBack = Number(groupMonthsBack);
+    if (!Number.isInteger(monthsBack) || monthsBack < 1 || monthsBack > 60) {
+      setGroupMessage("Months back must be a whole number between 1 and 60.");
+      return;
+    }
+
+    if (!groupName.trim()) {
+      setGroupMessage("Group name is required.");
+      return;
+    }
+
+    setIsGroupSubmitting(true);
+    setGroupMessage("Creating group...");
+
+    try {
+      const payload = {
+        name: groupName.trim(),
+        scope: isAdmin ? groupScope : "private",
+        filter: {
+          type: "active_orders_last_months" as const,
+          monthsBack
+        }
+      };
+
+      const response = await fetch(`${API_BASE_URL}/api/recommendations/groups`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const body = (await response.json().catch(() => null)) as { message?: string; group?: { id: number; name: string } } | null;
+
+      if (!response.ok) {
+        setGroupMessage(body?.message ?? `Group creation failed (${response.status}).`);
+        return;
+      }
+
+      setGroupMessage(`Group "${body?.group?.name ?? groupName}" created.`);
+      await loadRecommendationGroups(token);
+      await loadRecommendationRules(token);
+      await loadRecommendationOpportunities(token);
+      if (body?.group?.id) {
+        setRuleGroupId(body.group.id);
+        setRuleComparisonGroupId(body.group.id);
+      }
+    } catch {
+      setGroupMessage("Group creation request failed.");
+    } finally {
+      setIsGroupSubmitting(false);
+    }
+  };
+
+  const handleCreateRule = async () => {
+    if (!token) {
+      setRuleMessage("Please login first.");
+      return;
+    }
+
+    if (!ruleGroupId) {
+      setRuleMessage("Select a target group first.");
+      return;
+    }
+
+    if (!ruleName.trim()) {
+      setRuleMessage("Rule name is required.");
+      return;
+    }
+
+    if (!ruleTargetValue.trim()) {
+      setRuleMessage("Target value is required.");
+      return;
+    }
+
+    const minPenetrationPct = Number(ruleMinPenetrationPct);
+    if (Number.isNaN(minPenetrationPct) || minPenetrationPct < 0 || minPenetrationPct > 100) {
+      setRuleMessage("Min penetration must be a number between 0 and 100.");
+      return;
+    }
+
+    setIsRuleSubmitting(true);
+    setRuleMessage("Creating rule...");
+
+    try {
+      const payload = {
+        name: ruleName.trim(),
+        scope: isAdmin ? ruleScope : "private",
+        groupId: ruleGroupId,
+        comparisonGroupId: ruleComparisonGroupId ?? undefined,
+        targetType: ruleTargetType,
+        targetValue: ruleTargetValue.trim(),
+        minPenetrationPct
+      };
+
+      const response = await fetch(`${API_BASE_URL}/api/recommendations/rules`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const body = (await response.json().catch(() => null)) as { message?: string; rule?: { name: string } } | null;
+      if (!response.ok) {
+        setRuleMessage(body?.message ?? `Rule creation failed (${response.status}).`);
+        return;
+      }
+
+      setRuleMessage(`Rule "${body?.rule?.name ?? ruleName}" created.`);
+      await loadRecommendationRules(token);
+      await loadRecommendationOpportunities(token);
+      if (selectedVisibleCustomerId) {
+        await loadCustomerRecommendations(token, selectedVisibleCustomerId);
+      }
+    } catch {
+      setRuleMessage("Rule creation request failed.");
+    } finally {
+      setIsRuleSubmitting(false);
+    }
+  };
+
+  const handleLoadSelectedRecommendations = async () => {
+    if (!token || !selectedVisibleCustomerId) {
+      setRecommendationMessage("No customer selected.");
+      return;
+    }
+
+    await loadCustomerRecommendations(token, selectedVisibleCustomerId);
+    await loadRecommendationOpportunities(token, selectedVisibleCustomerId);
+  };
+
+  const handleLoadManualRecommendations = async () => {
+    if (!token) {
+      setRecommendationMessage("Please login first.");
+      return;
+    }
+
+    const id = Number(manualCustomerId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setRecommendationMessage("Customer id must be a positive integer.");
+      return;
+    }
+
+    await loadCustomerRecommendations(token, id);
+    await loadRecommendationOpportunities(token, id);
+  };
+
   return (
     <main className="page">
       <header className="hero">
-        <p className="eyebrow">Phase 6</p>
-        <h1>CRM MVP Access + Category & Top Product Analytics</h1>
-        <p className="subtitle">Validate auth, visibility, XML imports, turnover, category share, and top product penetration.</p>
+        <p className="eyebrow">Phase 7</p>
+        <h1>CRM MVP Access + Recommendations</h1>
+        <p className="subtitle">
+          Validate auth, visibility, XML imports, product analytics, customer groups, and recommendation opportunities.
+        </p>
       </header>
 
       <section className="status-grid" aria-label="service status">
@@ -957,6 +1380,200 @@ function App() {
               </details>
             </article>
           )}
+        </section>
+      )}
+
+      {isLoggedIn && (
+        <section className="panel" aria-label="recommendation panel">
+          <div className="admin-head">
+            <h2>Recommendation Rules Panel</h2>
+            <button type="button" onClick={handleRefreshRecommendations} disabled={isRecommendationLoading}>
+              {isRecommendationLoading ? "Refreshing..." : "Refresh recommendations"}
+            </button>
+          </div>
+
+          <p className="message">{recommendationMessage}</p>
+
+          <div className="card-grid">
+            <article className="customer-card">
+              <h3>Create customer group</h3>
+              <label>
+                Group name
+                <input value={groupName} onChange={(e) => setGroupName(e.target.value)} />
+              </label>
+
+              <div className="date-row">
+                <label>
+                  Scope
+                  <select
+                    value={isAdmin ? groupScope : "private"}
+                    onChange={(e) => setGroupScope(e.target.value as "global" | "private")}
+                    disabled={!isAdmin}
+                  >
+                    <option value="global">global</option>
+                    <option value="private">private</option>
+                  </select>
+                </label>
+                <label>
+                  Active months back
+                  <input value={groupMonthsBack} onChange={(e) => setGroupMonthsBack(e.target.value)} />
+                </label>
+              </div>
+
+              <div className="actions">
+                <button type="button" onClick={handleCreateGroup} disabled={isGroupSubmitting}>
+                  {isGroupSubmitting ? "Creating..." : "Create group"}
+                </button>
+              </div>
+              <p className="hint">{groupMessage}</p>
+            </article>
+
+            <article className="customer-card">
+              <h3>Create recommendation rule</h3>
+
+              <label>
+                Rule name
+                <input value={ruleName} onChange={(e) => setRuleName(e.target.value)} />
+              </label>
+
+              <div className="date-row">
+                <label>
+                  Scope
+                  <select
+                    value={isAdmin ? ruleScope : "private"}
+                    onChange={(e) => setRuleScope(e.target.value as "global" | "private")}
+                    disabled={!isAdmin}
+                  >
+                    <option value="global">global</option>
+                    <option value="private">private</option>
+                  </select>
+                </label>
+
+                <label>
+                  Target type
+                  <select
+                    value={ruleTargetType}
+                    onChange={(e) => setRuleTargetType(e.target.value as "category" | "top_product")}
+                  >
+                    <option value="category">category</option>
+                    <option value="top_product">top_product</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="date-row">
+                <label>
+                  Target group
+                  <select
+                    value={ruleGroupId ?? ""}
+                    onChange={(e) => setRuleGroupId(e.target.value ? Number(e.target.value) : null)}
+                  >
+                    <option value="">Select group</option>
+                    {groups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.name} ({group.scope})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Comparison group
+                  <select
+                    value={ruleComparisonGroupId ?? ""}
+                    onChange={(e) => setRuleComparisonGroupId(e.target.value ? Number(e.target.value) : null)}
+                  >
+                    <option value="">same as target group</option>
+                    {groups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.name} ({group.scope})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="date-row">
+                <label>
+                  Target value
+                  <input value={ruleTargetValue} onChange={(e) => setRuleTargetValue(e.target.value)} />
+                </label>
+
+                <label>
+                  Min penetration (%)
+                  <input value={ruleMinPenetrationPct} onChange={(e) => setRuleMinPenetrationPct(e.target.value)} />
+                </label>
+              </div>
+
+              <div className="actions">
+                <button type="button" onClick={handleCreateRule} disabled={isRuleSubmitting}>
+                  {isRuleSubmitting ? "Creating..." : "Create rule"}
+                </button>
+              </div>
+              <p className="hint">{ruleMessage}</p>
+            </article>
+          </div>
+
+          <div className="actions">
+            <button type="button" onClick={() => token && loadRecommendationOpportunities(token)} disabled={isRecommendationLoading}>
+              Load all visible opportunities
+            </button>
+            <button type="button" onClick={handleLoadSelectedRecommendations} disabled={isRecommendationLoading}>
+              Opportunities for selected customer
+            </button>
+            <button type="button" onClick={handleLoadManualRecommendations} disabled={isRecommendationLoading}>
+              Opportunities by manual ID
+            </button>
+          </div>
+
+          <div className="card-grid">
+            <article className="customer-card">
+              <h3>Visible groups ({groups.length})</h3>
+              <ul className="history-list">
+                {groups.map((group) => (
+                  <li key={group.id}>
+                    #{group.id} {group.name} [{group.scope}] members {group.visibleMembers}/{group.totalMembers}
+                  </li>
+                ))}
+              </ul>
+            </article>
+
+            <article className="customer-card">
+              <h3>Visible rules ({rules.length})</h3>
+              <ul className="history-list">
+                {rules.map((rule) => (
+                  <li key={rule.id}>
+                    #{rule.id} {rule.name} [{rule.scope}] - {rule.targetType}:{rule.targetValue} (min{" "}
+                    {rule.minPenetrationPct}%)
+                  </li>
+                ))}
+              </ul>
+            </article>
+          </div>
+
+          <article className="customer-card">
+            <h3>All visible opportunities ({opportunities.length})</h3>
+            <ul className="history-list">
+              {opportunities.map((item) => (
+                <li key={`${item.customerId}-${item.ruleId}`}>
+                  {item.customerName} to {item.ruleName} ({item.targetType}:{item.targetValue}, penetration{" "}
+                  {item.comparisonPenetrationPct}% / min {item.minPenetrationPct}%)
+                </li>
+              ))}
+            </ul>
+          </article>
+
+          <article className="customer-card">
+            <h3>Selected customer opportunities ({customerRecommendations.length})</h3>
+            <ul className="history-list">
+              {customerRecommendations.map((item) => (
+                <li key={`customer-${item.customerId}-${item.ruleId}`}>
+                  {item.customerName} to {item.ruleName} ({item.targetType}:{item.targetValue}, penetration{" "}
+                  {item.comparisonPenetrationPct}% / min {item.minPenetrationPct}%)
+                </li>
+              ))}
+            </ul>
+          </article>
         </section>
       )}
 

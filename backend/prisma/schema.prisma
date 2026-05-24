@@ -19,6 +19,25 @@ enum OrderItemType {
   other
 }
 
+enum CustomerGroupScope {
+  global
+  private
+}
+
+enum CustomerGroupFilterType {
+  active_orders_last_months
+}
+
+enum RecommendationRuleScope {
+  global
+  private
+}
+
+enum RecommendationTargetType {
+  category
+  top_product
+}
+
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique
@@ -31,6 +50,8 @@ model User {
   customerAssignmentsAsSalesRep CustomerAssignment[] @relation("SalesRepAssignments")
   customerAssignmentsAsAdmin    CustomerAssignment[] @relation("AssignedByAdmin")
   importRunsTriggered           ImportRun[]          @relation("ImportTriggeredBy")
+  customerGroupsOwned           CustomerGroup[]      @relation("GroupOwner")
+  recommendationRulesOwned      RecommendationRule[] @relation("RuleOwner")
 }
 
 model Customer {
@@ -58,6 +79,47 @@ model GlobalTopProduct {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model CustomerGroup {
+  id         Int                     @id @default(autoincrement())
+  name       String
+  scope      CustomerGroupScope
+  ownerUserId Int?
+  filterType CustomerGroupFilterType @default(active_orders_last_months)
+  monthsBack Int                     @default(12)
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+
+  owner             User?                @relation("GroupOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  rulesAsTarget     RecommendationRule[] @relation("RuleGroup")
+  rulesAsComparison RecommendationRule[] @relation("RuleComparisonGroup")
+
+  @@index([scope, ownerUserId])
+  @@index([name])
+}
+
+model RecommendationRule {
+  id                Int                      @id @default(autoincrement())
+  name              String
+  scope             RecommendationRuleScope
+  ownerUserId       Int?
+  groupId           Int
+  comparisonGroupId Int?
+  targetType        RecommendationTargetType
+  targetValue       String
+  minPenetrationPct Decimal                  @db.Decimal(5, 2)
+  isActive          Boolean                  @default(true)
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  owner           User?         @relation("RuleOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  group           CustomerGroup @relation("RuleGroup", fields: [groupId], references: [id], onDelete: Restrict)
+  comparisonGroup CustomerGroup? @relation("RuleComparisonGroup", fields: [comparisonGroupId], references: [id], onDelete: SetNull)
+
+  @@index([scope, ownerUserId, isActive])
+  @@index([groupId])
+  @@index([comparisonGroupId])
 }
 
 model CustomerAssignment {

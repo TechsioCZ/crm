@@ -6,6 +6,7 @@ import { healthRouter } from "./routes/health";
 import { authRouter } from "./routes/auth";
 import { adminRouter } from "./routes/admin";
 import { customersRouter } from "./routes/customers";
+import { recommendationsRouter } from "./routes/recommendations";
 
 const app = express();
 const allowedOrigins = env.CORS_ORIGIN.split(",").map((origin) => origin.trim());
@@ -33,6 +34,7 @@ app.use("/api/health", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/customers", customersRouter);
+app.use("/api/recommendations", recommendationsRouter);
 
 app.get("/", (_req, res) => {
   res.json({
@@ -45,7 +47,12 @@ app.get("/", (_req, res) => {
       adminXmlImport: "POST /api/admin/imports/orders/xml",
       adminImportHistory: "GET /api/admin/imports",
       roleCustomers: "GET /api/customers",
-      customerProductAnalytics: "GET /api/customers/:customerId/analytics/product?from=YYYY-MM-DD&to=YYYY-MM-DD"
+      customerProductAnalytics: "GET /api/customers/:customerId/analytics/product?from=YYYY-MM-DD&to=YYYY-MM-DD",
+      recommendationGroups: "GET/POST /api/recommendations/groups",
+      recommendationGroupMembers: "GET /api/recommendations/groups/:groupId/members",
+      recommendationRules: "GET/POST /api/recommendations/rules",
+      recommendationOpportunities: "GET /api/recommendations/opportunities",
+      recommendationByCustomer: "GET /api/recommendations/customers/:customerId"
     }
   });
 });
