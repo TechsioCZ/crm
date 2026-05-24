@@ -131,8 +131,31 @@ type ProductAnalyticsResponse = {
   categoryBreakdown: Array<{
     category: string;
     turnoverNetCzk: string;
+    sharePct: string;
     lineCount: number;
   }>;
+  catalogCategoryStats: {
+    totalCatalogCategories: number;
+    boughtCatalogCategoriesCount: number;
+    neverBoughtCategories: string[];
+  };
+  topProductStats: {
+    topProductsTotalCount: number;
+    topProductsBoughtCount: number;
+    topProductsPenetrationPct: string;
+    boughtTopProducts: Array<{
+      id: number;
+      name: string;
+      sku: string | null;
+      categoryName: string | null;
+    }>;
+    neverBoughtTopProducts: Array<{
+      id: number;
+      name: string;
+      sku: string | null;
+      categoryName: string | null;
+    }>;
+  };
 };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
@@ -193,6 +216,44 @@ const SAMPLE_XML_INVALID = `<orders>
   <order>
     <order_id>999</order_id>
     <status>nova</status>
+  </order>
+</orders>`;
+
+const SAMPLE_XML_PHASE6 = `<orders>
+  <order>
+    <order_id>PHASE6-100</order_id>
+    <customer_id>1</customer_id>
+    <status>dokoncena</status>
+    <imported_at>2026-03-10T10:00:00Z</imported_at>
+    <items>
+      <item>
+        <type>product</type>
+        <sku>TOP-001</sku>
+        <name>Kompozit A</name>
+        <category>Vyplnove materialy</category>
+        <quantity>1</quantity>
+        <unit_price_net_czk>1000</unit_price_net_czk>
+        <line_net_czk>1000</line_net_czk>
+      </item>
+      <item>
+        <type>product</type>
+        <sku>TOP-002</sku>
+        <name>Kompozit B</name>
+        <category>Vyplnove materialy</category>
+        <quantity>1</quantity>
+        <unit_price_net_czk>1500</unit_price_net_czk>
+        <line_net_czk>1500</line_net_czk>
+      </item>
+      <item>
+        <type>product</type>
+        <sku>TOP-003</sku>
+        <name>Rukavice Premium</name>
+        <category>Ochrana</category>
+        <quantity>1</quantity>
+        <unit_price_net_czk>7500</unit_price_net_czk>
+        <line_net_czk>7500</line_net_czk>
+      </item>
+    </items>
   </order>
 </orders>`;
 
@@ -671,9 +732,9 @@ function App() {
   return (
     <main className="page">
       <header className="hero">
-        <p className="eyebrow">Phase 5</p>
-        <h1>CRM MVP Access + Product Analytics Check</h1>
-        <p className="subtitle">Validate auth, visibility, XML imports, and product turnover analytics.</p>
+        <p className="eyebrow">Phase 6</p>
+        <h1>CRM MVP Access + Category & Top Product Analytics</h1>
+        <p className="subtitle">Validate auth, visibility, XML imports, turnover, category share, and top product penetration.</p>
       </header>
 
       <section className="status-grid" aria-label="service status">
@@ -825,6 +886,11 @@ function App() {
                 Product turnover (net CZK): <strong>{analyticsResult.totals.productNetCzk}</strong>
               </p>
               <p>
+                Top product penetration: <strong>{analyticsResult.topProductStats.topProductsBoughtCount}</strong> /{" "}
+                <strong>{analyticsResult.topProductStats.topProductsTotalCount}</strong> (
+                <strong>{analyticsResult.topProductStats.topProductsPenetrationPct}%</strong>)
+              </p>
+              <p>
                 Shipping excluded: <strong>{analyticsResult.totals.shippingNetCzk}</strong> | Payment excluded:{" "}
                 <strong>{analyticsResult.totals.paymentNetCzk}</strong>
               </p>
@@ -850,7 +916,41 @@ function App() {
                 <ul className="history-list">
                   {analyticsResult.categoryBreakdown.map((category) => (
                     <li key={category.category}>
-                      {category.category}: {category.turnoverNetCzk} CZK
+                      {category.category}: {category.turnoverNetCzk} CZK ({category.sharePct}%)
+                    </li>
+                  ))}
+                </ul>
+              </details>
+
+              <details>
+                <summary>
+                  Never bought categories ({analyticsResult.catalogCategoryStats.neverBoughtCategories.length} /{" "}
+                  {analyticsResult.catalogCategoryStats.totalCatalogCategories})
+                </summary>
+                <ul className="history-list">
+                  {analyticsResult.catalogCategoryStats.neverBoughtCategories.map((categoryName) => (
+                    <li key={categoryName}>{categoryName}</li>
+                  ))}
+                </ul>
+              </details>
+
+              <details>
+                <summary>Never bought top products ({analyticsResult.topProductStats.neverBoughtTopProducts.length})</summary>
+                <ul className="history-list">
+                  {analyticsResult.topProductStats.neverBoughtTopProducts.map((product) => (
+                    <li key={product.id}>
+                      {product.name} {product.sku ? `(${product.sku})` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+
+              <details>
+                <summary>Bought top products ({analyticsResult.topProductStats.boughtTopProducts.length})</summary>
+                <ul className="history-list">
+                  {analyticsResult.topProductStats.boughtTopProducts.map((product) => (
+                    <li key={product.id}>
+                      {product.name} {product.sku ? `(${product.sku})` : ""}
                     </li>
                   ))}
                 </ul>
@@ -941,6 +1041,9 @@ function App() {
             </button>
             <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_INVALID)}>
               Load sample: invalid
+            </button>
+            <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_PHASE6)}>
+              Load sample: phase6 analytics
             </button>
           </div>
 

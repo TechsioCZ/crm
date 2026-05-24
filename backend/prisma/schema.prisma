@@ -43,6 +43,23 @@ model Customer {
   orders      Order[]
 }
 
+model CatalogCategory {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model GlobalTopProduct {
+  id           Int      @id @default(autoincrement())
+  sku          String?  @unique
+  name         String   @unique
+  categoryName String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 model CustomerAssignment {
   id         Int       @id @default(autoincrement())
   customerId Int

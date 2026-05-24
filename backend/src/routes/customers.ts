@@ -34,6 +34,19 @@ function toMoneyString(value: Prisma.Decimal): string {
   return value.toFixed(2);
 }
 
+function normalizeToken(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.toLowerCase();
+}
+
 async function getCustomerForAuthorizedUser(customerId: number, authUser: AuthUser) {
   const customer = await prisma.customer.findUnique({
     where: { id: customerId },
@@ -168,7 +181,7 @@ customersRouter.get("/:customerId/analytics/product", async (req, res) => {
     }
   };
 
-  const [ordersCount, orderItems] = await Promise.all([
+  const [ordersCount, orderItems, catalogCategories, topProducts, allTimeProductItems] = await Promise.all([
     prisma.order.count({ where: orderWhere }),
     prisma.orderItem.findMany({
       where: {
@@ -180,6 +193,35 @@ customersRouter.get("/:customerId/analytics/product", async (req, res) => {
         name: true,
         category: true,
         lineNetCzk: true
+      }
+    }),
+    prisma.catalogCategory.findMany({
+      orderBy: { name: "asc" },
+      select: {
+        name: true
+      }
+    }),
+    prisma.globalTopProduct.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        sku: true,
+        categoryName: true
+      }
+    }),
+    prisma.orderItem.findMany({
+      where: {
+        lineType: "product",
+        order: {
+          customerId
+        }
+      },
+      select: {
+        sku: true,
+        name: true,
+        category: true
       }
     })
   ]);
@@ -300,10 +342,58 @@ customersRouter.get("/:customerId/analytics/product", async (req, res) => {
     .map((row) => ({
       category: row.category,
       turnoverNetCzk: toMoneyString(row.turnover),
+      sharePct: productTurnover.eq(0) ? "0.00" : row.turnover.div(productTurnover).mul(100).toFixed(2),
       lineCount: row.lineCount
     }));
 
   const allLinesTurnover = productTurnover.plus(shippingTurnover).plus(paymentTurnover).plus(otherTurnover);
+
+  const boughtCategorySet = new Set<string>();
+  const boughtProductSkuSet = new Set<string>();
+  const boughtProductNameSet = new Set<string>();
+
+  for (const item of allTimeProductItems) {
+    const categoryKey = normalizeToken(item.category);
+    if (categoryKey) {
+      boughtCategorySet.add(categoryKey);
+    }
+
+    const skuKey = normalizeToken(item.sku);
+    if (skuKey) {
+      boughtProductSkuSet.add(skuKey);
+    }
+
+    const nameKey = normalizeToken(item.name);
+    if (nameKey) {
+      boughtProductNameSet.add(nameKey);
+    }
+  }
+
+  const neverBoughtCategories = catalogCategories
+    .filter((category) => !boughtCategorySet.has(normalizeToken(category.name) ?? ""))
+    .map((category) => category.name);
+
+  const topProductsWithFlags = topProducts.map((product) => {
+    const skuKey = normalizeToken(product.sku);
+    const nameKey = normalizeToken(product.name);
+
+    const boughtBySku = skuKey ? boughtProductSkuSet.has(skuKey) : false;
+    const boughtByName = nameKey ? boughtProductNameSet.has(nameKey) : false;
+
+    return {
+      ...product,
+      bought: boughtBySku || boughtByName
+    };
+  });
+
+  const boughtTopProducts = topProductsWithFlags.filter((product) => product.bought);
+  const neverBoughtTopProducts = topProductsWithFlags.filter((product) => !product.bought);
+  const topProductsTotalCount = topProductsWithFlags.length;
+  const topProductsBoughtCount = boughtTopProducts.length;
+  const topProductsPenetrationPct =
+    topProductsTotalCount === 0
+      ? "0.00"
+      : new Prisma.Decimal(topProductsBoughtCount).div(topProductsTotalCount).mul(100).toFixed(2);
 
   res.json({
     period: {
@@ -327,7 +417,29 @@ customersRouter.get("/:customerId/analytics/product", async (req, res) => {
       allItemLinesNetCzk: toMoneyString(allLinesTurnover)
     },
     productBreakdown,
-    categoryBreakdown
+    categoryBreakdown,
+    catalogCategoryStats: {
+      totalCatalogCategories: catalogCategories.length,
+      boughtCatalogCategoriesCount: catalogCategories.length - neverBoughtCategories.length,
+      neverBoughtCategories
+    },
+    topProductStats: {
+      topProductsTotalCount,
+      topProductsBoughtCount,
+      topProductsPenetrationPct,
+      boughtTopProducts: boughtTopProducts.map((product) => ({
+        id: product.id,
+        name: product.name,
+        sku: product.sku,
+        categoryName: product.categoryName
+      })),
+      neverBoughtTopProducts: neverBoughtTopProducts.map((product) => ({
+        id: product.id,
+        name: product.name,
+        sku: product.sku,
+        categoryName: product.categoryName
+      }))
+    }
   });
 });
 

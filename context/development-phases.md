@@ -3,7 +3,7 @@
 Datum: 2026-05-24
 Pocet fazi: 8
 Cil: po kazde fazi mit funkcni celek, ktery jde rucne overit.
-Aktualni stav: Faze 1-5 dokonceny (2026-05-24), faze 6-8 pending.
+Aktualni stav: Faze 1-6 dokonceny (2026-05-24), faze 7-8 pending.
 
 ## Faze 1 - Zaklad projektu a prihlaseni
 ### Dodame
@@ -65,7 +65,7 @@ Aktualni stav: Faze 1-5 dokonceny (2026-05-24), faze 6-8 pending.
 3. Pridej zapornou polozku -200 pro stejny produkt.
 4. Over, ze finalni obrat produktu je 800.
 
-## Faze 6 - Kategorie a top produkty
+## Faze 6 - Kategorie a top produkty (dokonceno 2026-05-24)
 ### Dodame
 - Podil kategorie na obratu zakaznika
 - Nekupovane kategorie
