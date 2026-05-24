@@ -38,6 +38,17 @@ enum RecommendationTargetType {
   top_product
 }
 
+enum TaskPriority {
+  low
+  medium
+  high
+}
+
+enum CustomerTaskStatus {
+  open
+  done
+}
+
 model User {
   id           Int      @id @default(autoincrement())
   email        String   @unique
@@ -52,6 +63,8 @@ model User {
   importRunsTriggered           ImportRun[]          @relation("ImportTriggeredBy")
   customerGroupsOwned           CustomerGroup[]      @relation("GroupOwner")
   recommendationRulesOwned      RecommendationRule[] @relation("RuleOwner")
+  customerNotesAuthored         CustomerNote[]       @relation("CustomerNoteAuthor")
+  customerTasksOwned            CustomerTask[]       @relation("CustomerTaskOwner")
 }
 
 model Customer {
@@ -62,6 +75,8 @@ model Customer {
 
   assignments CustomerAssignment[]
   orders      Order[]
+  notes       CustomerNote[]
+  tasks       CustomerTask[]
 }
 
 model CatalogCategory {
@@ -120,6 +135,41 @@ model RecommendationRule {
   @@index([scope, ownerUserId, isActive])
   @@index([groupId])
   @@index([comparisonGroupId])
+}
+
+model CustomerNote {
+  id           Int      @id @default(autoincrement())
+  customerId   Int
+  authorUserId Int
+  text         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  author   User     @relation("CustomerNoteAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+
+  @@index([customerId, createdAt])
+  @@index([authorUserId, createdAt])
+}
+
+model CustomerTask {
+  id          Int                @id @default(autoincrement())
+  customerId  Int
+  ownerUserId Int
+  description String
+  dueDate     DateTime
+  priority    TaskPriority       @default(medium)
+  status      CustomerTaskStatus @default(open)
+  completedAt DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  owner    User     @relation("CustomerTaskOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+
+  @@index([customerId, dueDate])
+  @@index([ownerUserId, dueDate])
+  @@index([status, dueDate])
 }
 
 model CustomerAssignment {

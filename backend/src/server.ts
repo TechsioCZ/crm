@@ -7,6 +7,7 @@ import { authRouter } from "./routes/auth";
 import { adminRouter } from "./routes/admin";
 import { customersRouter } from "./routes/customers";
 import { recommendationsRouter } from "./routes/recommendations";
+import { crmRouter } from "./routes/crm";
 
 const app = express();
 const allowedOrigins = env.CORS_ORIGIN.split(",").map((origin) => origin.trim());
@@ -35,6 +36,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/customers", customersRouter);
 app.use("/api/recommendations", recommendationsRouter);
+app.use("/api/crm", crmRouter);
 
 app.get("/", (_req, res) => {
   res.json({
@@ -52,7 +54,11 @@ app.get("/", (_req, res) => {
       recommendationGroupMembers: "GET /api/recommendations/groups/:groupId/members",
       recommendationRules: "GET/POST /api/recommendations/rules",
       recommendationOpportunities: "GET /api/recommendations/opportunities",
-      recommendationByCustomer: "GET /api/recommendations/customers/:customerId"
+      recommendationByCustomer: "GET /api/recommendations/customers/:customerId",
+      crmNotes: "GET/POST /api/crm/customers/:customerId/notes",
+      crmCustomerTasks: "GET/POST /api/crm/customers/:customerId/tasks",
+      crmMyTasks: "GET /api/crm/tasks/mine",
+      crmTurnoverTrend: "GET /api/crm/customers/:customerId/turnover-trend?from=YYYY-MM-DD&to=YYYY-MM-DD"
     }
   });
 });

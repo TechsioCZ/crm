@@ -180,6 +180,83 @@ async function upsertOrderWithItems(input: {
   return "created";
 }
 
+async function ensureCustomerNote(customerId: number, authorUserId: number, text: string) {
+  const existing = await prisma.customerNote.findFirst({
+    where: {
+      customerId,
+      authorUserId,
+      text
+    },
+    select: {
+      id: true
+    }
+  });
+
+  if (existing) {
+    return existing.id;
+  }
+
+  const created = await prisma.customerNote.create({
+    data: {
+      customerId,
+      authorUserId,
+      text
+    },
+    select: {
+      id: true
+    }
+  });
+
+  return created.id;
+}
+
+async function ensureCustomerTask(input: {
+  customerId: number;
+  ownerUserId: number;
+  description: string;
+  dueDate: string;
+  priority: "low" | "medium" | "high";
+}) {
+  const dueDate = new Date(`${input.dueDate}T00:00:00.000Z`);
+
+  const existing = await prisma.customerTask.findFirst({
+    where: {
+      customerId: input.customerId,
+      ownerUserId: input.ownerUserId,
+      description: input.description,
+      dueDate
+    },
+    select: {
+      id: true
+    }
+  });
+
+  if (existing) {
+    await prisma.customerTask.update({
+      where: { id: existing.id },
+      data: {
+        priority: input.priority
+      }
+    });
+    return existing.id;
+  }
+
+  const created = await prisma.customerTask.create({
+    data: {
+      customerId: input.customerId,
+      ownerUserId: input.ownerUserId,
+      description: input.description,
+      dueDate,
+      priority: input.priority
+    },
+    select: {
+      id: true
+    }
+  });
+
+  return created.id;
+}
+
 async function main(): Promise<void> {
   const admin = await upsertUser("admin@crm.local", "Admin", Role.admin, "Admin123!");
   const novak = await upsertUser("novak@crm.local", "Novak", Role.sales_rep, "Sales123!");
@@ -187,9 +264,11 @@ async function main(): Promise<void> {
 
   const ordinaceAlfa = await upsertCustomer("Ordinace Alfa");
   const ordinaceBeta = await upsertCustomer("Ordinace Beta");
+  const ordinaceTrend = await upsertCustomer("Ordinace Trend");
 
   await ensureCurrentAssignment(ordinaceAlfa.id, novak.id, admin.id);
   await ensureCurrentAssignment(ordinaceBeta.id, svoboda.id, admin.id);
+  await ensureCurrentAssignment(ordinaceTrend.id, novak.id, admin.id);
 
   const catalogCategories = [
     "Vyplnove materialy",
@@ -269,14 +348,89 @@ async function main(): Promise<void> {
     }
   }
 
+  const phase8TrendOrders = [
+    {
+      orderId: "SEED-PHASE8-TREND-CURRENT-001",
+      customerId: ordinaceTrend.id,
+      status: "dokoncena",
+      importedAt: "2026-02-15T11:00:00Z",
+      items: [
+        {
+          lineType: "product" as OrderItemType,
+          sku: "TRN-2026-A",
+          name: "Trend Product 2026",
+          category: "Vyplnove materialy",
+          quantity: "1",
+          unitPriceNetCzk: "90000",
+          lineNetCzk: "90000"
+        }
+      ]
+    },
+    {
+      orderId: "SEED-PHASE8-TREND-PREV-001",
+      customerId: ordinaceTrend.id,
+      status: "dokoncena",
+      importedAt: "2025-11-20T11:00:00Z",
+      items: [
+        {
+          lineType: "product" as OrderItemType,
+          sku: "TRN-2025-A",
+          name: "Trend Product 2025",
+          category: "Vyplnove materialy",
+          quantity: "1",
+          unitPriceNetCzk: "120000",
+          lineNetCzk: "120000"
+        }
+      ]
+    }
+  ];
+
+  let phase8CreatedOrders = 0;
+  let phase8UpdatedOrders = 0;
+  for (const order of phase8TrendOrders) {
+    const result = await upsertOrderWithItems(order);
+    if (result === "created") {
+      phase8CreatedOrders += 1;
+    } else {
+      phase8UpdatedOrders += 1;
+    }
+  }
+
+  const seededNoteIds = [
+    await ensureCustomerNote(ordinaceAlfa.id, novak.id, "Domluvit nabidku na rukavice"),
+    await ensureCustomerNote(ordinaceBeta.id, svoboda.id, "Overit termin dalsi objednavky")
+  ];
+
+  const seededTaskIds = [
+    await ensureCustomerTask({
+      customerId: ordinaceAlfa.id,
+      ownerUserId: novak.id,
+      description: "Zavolat ordinaci ohledne Profylaxe",
+      dueDate: "2026-06-10",
+      priority: "high"
+    }),
+    await ensureCustomerTask({
+      customerId: ordinaceBeta.id,
+      ownerUserId: svoboda.id,
+      description: "Pripravit navazujici nabidku",
+      dueDate: "2026-06-20",
+      priority: "medium"
+    })
+  ];
+
   console.log("Seed complete:");
   console.log("- admin@crm.local / Admin123!");
   console.log("- novak@crm.local / Sales123!");
   console.log("- svoboda@crm.local / Sales123!");
-  console.log("- Customers: Ordinace Alfa -> Novak, Ordinace Beta -> Svoboda");
+  console.log("- Customers: Ordinace Alfa -> Novak, Ordinace Beta -> Svoboda, Ordinace Trend -> Novak");
   console.log(`- Catalog categories: ${catalogCategories.length}`);
   console.log(`- Global top products: ${topProducts.length}`);
   console.log(`- Phase 7 seed orders: created ${createdOrders}, updated ${updatedOrders}`);
+  console.log(
+    `- Phase 8 trend orders: created ${phase8CreatedOrders}, updated ${phase8UpdatedOrders} (expected -25.00% trend for Ordinace Trend)`
+  );
+  console.log(`- Phase 8 sample notes: ${seededNoteIds.length}`);
+  console.log(`- Phase 8 sample tasks: ${seededTaskIds.length}`);
 }
 
 main()

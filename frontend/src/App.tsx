@@ -206,6 +206,60 @@ type RecommendationOpportunity = {
   minPenetrationPct: string;
 };
 
+type TaskPriority = "low" | "medium" | "high";
+
+type CrmNote = {
+  id: number;
+  text: string;
+  createdAt: string;
+  author: {
+    id: number;
+    name: string;
+    email: string;
+  };
+};
+
+type CrmTask = {
+  id: number;
+  description: string;
+  dueDate: string;
+  priority: TaskPriority;
+  status: "open" | "done";
+  createdAt: string;
+  completedAt: string | null;
+  customer: {
+    id: number;
+    name: string;
+  };
+  owner: {
+    id: number;
+    name: string;
+    email: string;
+  };
+};
+
+type TurnoverTrendResponse = {
+  customer: {
+    id: number;
+    name: string;
+  };
+  currentPeriod: {
+    from: string;
+    to: string;
+    productTurnoverNetCzk: string;
+  };
+  previousPeriod: {
+    from: string;
+    to: string;
+    productTurnoverNetCzk: string;
+  };
+  comparison: {
+    absoluteChangeNetCzk: string;
+    changePct: string | null;
+    direction: "up" | "down" | "flat";
+  };
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 
 const SAMPLE_XML_CREATE = `<orders>
@@ -364,6 +418,19 @@ function App() {
   const [ruleGroupId, setRuleGroupId] = useState<number | null>(null);
   const [ruleComparisonGroupId, setRuleComparisonGroupId] = useState<number | null>(null);
 
+  const [crmMessage, setCrmMessage] = useState("CRM panel not loaded yet.");
+  const [noteText, setNoteText] = useState("Domluvit nabidku na rukavice");
+  const [taskDescription, setTaskDescription] = useState("Zavolat ohledne Profylaxe");
+  const [taskDueDate, setTaskDueDate] = useState("2026-06-15");
+  const [taskPriority, setTaskPriority] = useState<TaskPriority>("medium");
+  const [notes, setNotes] = useState<CrmNote[]>([]);
+  const [customerTasks, setCustomerTasks] = useState<CrmTask[]>([]);
+  const [myTasks, setMyTasks] = useState<CrmTask[]>([]);
+  const [trendFrom, setTrendFrom] = useState("2026-01-01");
+  const [trendTo, setTrendTo] = useState("2026-03-31");
+  const [trendResult, setTrendResult] = useState<TurnoverTrendResponse | null>(null);
+  const [isCrmLoading, setIsCrmLoading] = useState(false);
+
   const isLoggedIn = useMemo(() => Boolean(token), [token]);
   const isAdmin = user?.role === "admin";
 
@@ -413,6 +480,7 @@ function App() {
       const body = (await response.json()) as { customers: CustomerListItem[] };
       setVisibleCustomers(body.customers);
       setAnalyticsResult(null);
+      setTrendResult(null);
 
       if (body.customers.length > 0) {
         const id = body.customers[0].id;
@@ -424,6 +492,9 @@ function App() {
         setSelectedVisibleCustomerId(null);
         setCustomerDetail(null);
         setCustomerRecommendations([]);
+        setNotes([]);
+        setCustomerTasks([]);
+        setTrendResult(null);
       }
 
       setCustomerMessage(`Loaded ${body.customers.length} visible customers.`);
@@ -670,6 +741,133 @@ function App() {
     }
   };
 
+  const loadCrmCustomerData = async (accessToken: string, customerId: number) => {
+    setIsCrmLoading(true);
+    try {
+      const headers = {
+        Authorization: `Bearer ${accessToken}`
+      };
+
+      const [notesRes, tasksRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/crm/customers/${customerId}/notes`, { headers }),
+        fetch(`${API_BASE_URL}/api/crm/customers/${customerId}/tasks`, { headers })
+      ]);
+
+      if (!notesRes.ok || !tasksRes.ok) {
+        if (notesRes.status === 403 || tasksRes.status === 403) {
+          setCrmMessage(`CRM data blocked for customer ${customerId} (403).`);
+        } else if (notesRes.status === 404 || tasksRes.status === 404) {
+          setCrmMessage(`Customer ${customerId} not found for CRM data (404).`);
+        } else {
+          setCrmMessage(`CRM data request failed (${notesRes.status}/${tasksRes.status}).`);
+        }
+        setNotes([]);
+        setCustomerTasks([]);
+        return;
+      }
+
+      const notesBody = (await notesRes.json()) as { notes: CrmNote[]; customer: { id: number; name: string } };
+      const tasksBody = (await tasksRes.json()) as {
+        tasks: Array<Omit<CrmTask, "customer">>;
+        customer: { id: number; name: string };
+      };
+
+      setNotes(notesBody.notes);
+      setCustomerTasks(
+        tasksBody.tasks.map((task) => ({
+          ...task,
+          customer: tasksBody.customer
+        }))
+      );
+      setCrmMessage(
+        `CRM loaded for ${notesBody.customer.name}: ${notesBody.notes.length} notes, ${tasksBody.tasks.length} customer tasks.`
+      );
+    } catch {
+      setNotes([]);
+      setCustomerTasks([]);
+      setCrmMessage("CRM request failed.");
+    } finally {
+      setIsCrmLoading(false);
+    }
+  };
+
+  const loadMyTasks = async (accessToken: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/crm/tasks/mine`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      });
+
+      if (!response.ok) {
+        setCrmMessage(`My tasks request failed (${response.status}).`);
+        setMyTasks([]);
+        return;
+      }
+
+      const body = (await response.json()) as { tasks: CrmTask[]; summary: { count: number } };
+      setMyTasks(body.tasks);
+      setCrmMessage(`Loaded my task list (${body.summary.count} tasks).`);
+    } catch {
+      setMyTasks([]);
+      setCrmMessage("My tasks request failed.");
+    }
+  };
+
+  const loadTurnoverTrend = async (accessToken: string, customerId: number) => {
+    if (!trendFrom || !trendTo) {
+      setCrmMessage("Choose both trend dates first.");
+      return;
+    }
+
+    if (trendFrom > trendTo) {
+      setCrmMessage("Trend `from` date must be before `to` date.");
+      return;
+    }
+
+    setIsCrmLoading(true);
+    try {
+      const query = new URLSearchParams({
+        from: trendFrom,
+        to: trendTo
+      });
+
+      const response = await fetch(
+        `${API_BASE_URL}/api/crm/customers/${customerId}/turnover-trend?${query.toString()}`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`
+          }
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 403) {
+          setCrmMessage(`Trend blocked for customer ${customerId} (403).`);
+        } else if (response.status === 404) {
+          setCrmMessage(`Customer ${customerId} not found for trend (404).`);
+        } else {
+          setCrmMessage(`Trend request failed (${response.status}).`);
+        }
+        setTrendResult(null);
+        return;
+      }
+
+      const body = (await response.json()) as TurnoverTrendResponse;
+      setTrendResult(body);
+
+      const changeText = body.comparison.changePct ? `${body.comparison.changePct}%` : "n/a";
+      setCrmMessage(
+        `Trend loaded for ${body.customer.name}: current ${body.currentPeriod.productTurnoverNetCzk} CZK vs previous ${body.previousPeriod.productTurnoverNetCzk} CZK (${changeText}).`
+      );
+    } catch {
+      setTrendResult(null);
+      setCrmMessage("Trend request failed.");
+    } finally {
+      setIsCrmLoading(false);
+    }
+  };
+
   const loadAdminData = async (accessToken: string) => {
     setIsAdminLoading(true);
 
@@ -762,8 +960,11 @@ function App() {
       await loadRecommendationGroups(body.accessToken);
       await loadRecommendationRules(body.accessToken);
       await loadRecommendationOpportunities(body.accessToken);
+      await loadMyTasks(body.accessToken);
       if (firstVisibleCustomerId) {
         await loadCustomerRecommendations(body.accessToken, firstVisibleCustomerId);
+        await loadCrmCustomerData(body.accessToken, firstVisibleCustomerId);
+        await loadTurnoverTrend(body.accessToken, firstVisibleCustomerId);
       }
 
       if (body.user.role === "admin") {
@@ -819,6 +1020,10 @@ function App() {
     setRules([]);
     setOpportunities([]);
     setCustomerRecommendations([]);
+    setNotes([]);
+    setCustomerTasks([]);
+    setMyTasks([]);
+    setTrendResult(null);
     setAuthMessage("Logged out");
     setAdminMessage("Admin panel not loaded yet.");
     setCustomerMessage("Customer panel not loaded yet.");
@@ -827,6 +1032,7 @@ function App() {
     setRecommendationMessage("Recommendations panel not loaded yet.");
     setGroupMessage("No group action yet.");
     setRuleMessage("No rule action yet.");
+    setCrmMessage("CRM panel not loaded yet.");
   };
 
   const handleAssign = async (customerId: number) => {
@@ -867,8 +1073,11 @@ function App() {
       await loadRecommendationGroups(token);
       await loadRecommendationRules(token);
       await loadRecommendationOpportunities(token);
+      await loadMyTasks(token);
       if (firstVisibleCustomerId) {
         await loadCustomerRecommendations(token, firstVisibleCustomerId);
+        await loadCrmCustomerData(token, firstVisibleCustomerId);
+        await loadTurnoverTrend(token, firstVisibleCustomerId);
       }
 
       if (body.changed) {
@@ -889,6 +1098,8 @@ function App() {
 
     await loadCustomerDetail(token, selectedVisibleCustomerId);
     await loadCustomerRecommendations(token, selectedVisibleCustomerId);
+    await loadCrmCustomerData(token, selectedVisibleCustomerId);
+    await loadTurnoverTrend(token, selectedVisibleCustomerId);
   };
 
   const handleLoadManualDetail = async () => {
@@ -905,6 +1116,8 @@ function App() {
 
     await loadCustomerDetail(token, id);
     await loadCustomerRecommendations(token, id);
+    await loadCrmCustomerData(token, id);
+    await loadTurnoverTrend(token, id);
   };
 
   const handleLoadSelectedAnalytics = async () => {
@@ -1150,13 +1363,151 @@ function App() {
     await loadRecommendationOpportunities(token, id);
   };
 
+  const handleLoadSelectedCrm = async () => {
+    if (!token || !selectedVisibleCustomerId) {
+      setCrmMessage("No customer selected.");
+      return;
+    }
+
+    await loadCrmCustomerData(token, selectedVisibleCustomerId);
+  };
+
+  const handleLoadManualCrm = async () => {
+    if (!token) {
+      setCrmMessage("Please login first.");
+      return;
+    }
+
+    const id = Number(manualCustomerId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setCrmMessage("Customer id must be a positive integer.");
+      return;
+    }
+
+    await loadCrmCustomerData(token, id);
+  };
+
+  const handleLoadSelectedTrend = async () => {
+    if (!token || !selectedVisibleCustomerId) {
+      setCrmMessage("No customer selected.");
+      return;
+    }
+
+    await loadTurnoverTrend(token, selectedVisibleCustomerId);
+  };
+
+  const handleLoadManualTrend = async () => {
+    if (!token) {
+      setCrmMessage("Please login first.");
+      return;
+    }
+
+    const id = Number(manualCustomerId);
+    if (!Number.isInteger(id) || id <= 0) {
+      setCrmMessage("Customer id must be a positive integer.");
+      return;
+    }
+
+    await loadTurnoverTrend(token, id);
+  };
+
+  const handleCreateNote = async () => {
+    if (!token || !selectedVisibleCustomerId) {
+      setCrmMessage("Select customer first.");
+      return;
+    }
+
+    if (!noteText.trim()) {
+      setCrmMessage("Note text is required.");
+      return;
+    }
+
+    setIsCrmLoading(true);
+    setCrmMessage("Creating note...");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/crm/customers/${selectedVisibleCustomerId}/notes`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          text: noteText.trim()
+        })
+      });
+
+      const body = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setCrmMessage(body?.message ?? `Create note failed (${response.status}).`);
+        return;
+      }
+
+      setCrmMessage("Note created.");
+      await loadCrmCustomerData(token, selectedVisibleCustomerId);
+    } catch {
+      setCrmMessage("Create note request failed.");
+    } finally {
+      setIsCrmLoading(false);
+    }
+  };
+
+  const handleCreateTask = async () => {
+    if (!token || !selectedVisibleCustomerId) {
+      setCrmMessage("Select customer first.");
+      return;
+    }
+
+    if (!taskDescription.trim()) {
+      setCrmMessage("Task description is required.");
+      return;
+    }
+
+    if (!taskDueDate) {
+      setCrmMessage("Task due date is required.");
+      return;
+    }
+
+    setIsCrmLoading(true);
+    setCrmMessage("Creating task...");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/crm/customers/${selectedVisibleCustomerId}/tasks`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          description: taskDescription.trim(),
+          dueDate: taskDueDate,
+          priority: taskPriority
+        })
+      });
+
+      const body = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setCrmMessage(body?.message ?? `Create task failed (${response.status}).`);
+        return;
+      }
+
+      setCrmMessage("Task created.");
+      await loadCrmCustomerData(token, selectedVisibleCustomerId);
+      await loadMyTasks(token);
+    } catch {
+      setCrmMessage("Create task request failed.");
+    } finally {
+      setIsCrmLoading(false);
+    }
+  };
+
   return (
     <main className="page">
       <header className="hero">
-        <p className="eyebrow">Phase 7</p>
-        <h1>CRM MVP Access + Recommendations</h1>
+        <p className="eyebrow">Phase 8</p>
+        <h1>CRM MVP Final Validation</h1>
         <p className="subtitle">
-          Validate auth, visibility, XML imports, product analytics, customer groups, and recommendation opportunities.
+          Validate auth, visibility, XML imports, analytics, recommendations, CRM notes/tasks, and turnover trend.
         </p>
       </header>
 
@@ -1378,6 +1729,146 @@ function App() {
                   ))}
                 </ul>
               </details>
+            </article>
+          )}
+        </section>
+      )}
+
+      {isLoggedIn && (
+        <section className="panel" aria-label="crm panel">
+          <div className="admin-head">
+            <h2>CRM Notes, Tasks & Turnover Trend</h2>
+            <button type="button" onClick={() => token && loadMyTasks(token)} disabled={isCrmLoading}>
+              {isCrmLoading ? "Loading..." : "Refresh my tasks"}
+            </button>
+          </div>
+
+          <p className="message">{crmMessage}</p>
+
+          <div className="date-row">
+            <label>
+              Trend from
+              <input type="date" value={trendFrom} onChange={(e) => setTrendFrom(e.target.value)} />
+            </label>
+            <label>
+              Trend to
+              <input type="date" value={trendTo} onChange={(e) => setTrendTo(e.target.value)} />
+            </label>
+          </div>
+
+          <div className="actions">
+            <button type="button" onClick={handleLoadSelectedCrm} disabled={isCrmLoading}>
+              Load CRM for selected customer
+            </button>
+            <button type="button" onClick={handleLoadManualCrm} disabled={isCrmLoading}>
+              Load CRM by manual ID
+            </button>
+            <button type="button" onClick={handleLoadSelectedTrend} disabled={isCrmLoading}>
+              Trend for selected customer
+            </button>
+            <button type="button" onClick={handleLoadManualTrend} disabled={isCrmLoading}>
+              Trend by manual ID
+            </button>
+          </div>
+
+          <div className="card-grid">
+            <article className="customer-card">
+              <h3>Add note to selected customer</h3>
+              <label>
+                Note text
+                <textarea value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={4} />
+              </label>
+              <div className="actions">
+                <button type="button" onClick={handleCreateNote} disabled={isCrmLoading}>
+                  Create note
+                </button>
+              </div>
+            </article>
+
+            <article className="customer-card">
+              <h3>Add task to selected customer</h3>
+              <label>
+                Description
+                <input value={taskDescription} onChange={(e) => setTaskDescription(e.target.value)} />
+              </label>
+              <div className="date-row">
+                <label>
+                  Due date
+                  <input type="date" value={taskDueDate} onChange={(e) => setTaskDueDate(e.target.value)} />
+                </label>
+                <label>
+                  Priority
+                  <select value={taskPriority} onChange={(e) => setTaskPriority(e.target.value as TaskPriority)}>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                  </select>
+                </label>
+              </div>
+              <div className="actions">
+                <button type="button" onClick={handleCreateTask} disabled={isCrmLoading}>
+                  Create task
+                </button>
+              </div>
+            </article>
+          </div>
+
+          <div className="card-grid">
+            <article className="customer-card">
+              <h3>Customer notes ({notes.length})</h3>
+              <ul className="history-list">
+                {notes.map((note) => (
+                  <li key={note.id}>
+                    {new Date(note.createdAt).toLocaleString()}: {note.text} ({note.author.name})
+                  </li>
+                ))}
+              </ul>
+            </article>
+
+            <article className="customer-card">
+              <h3>Customer tasks ({customerTasks.length})</h3>
+              <ul className="history-list">
+                {customerTasks.map((task) => (
+                  <li key={task.id}>
+                    {task.description} | due {new Date(task.dueDate).toLocaleDateString()} | {task.priority} | {task.status}
+                  </li>
+                ))}
+              </ul>
+            </article>
+          </div>
+
+          <article className="customer-card">
+            <h3>My tasks ({myTasks.length})</h3>
+            <ul className="history-list">
+              {myTasks.map((task) => (
+                <li key={`mine-${task.id}`}>
+                  {task.customer.name}: {task.description} | due {new Date(task.dueDate).toLocaleDateString()} |{" "}
+                  {task.priority}
+                </li>
+              ))}
+            </ul>
+          </article>
+
+          {trendResult && (
+            <article className="customer-card">
+              <h3>
+                Turnover trend: {trendResult.customer.name} ({trendResult.customer.id})
+              </h3>
+              <p>
+                Current ({trendResult.currentPeriod.from} - {trendResult.currentPeriod.to}):{" "}
+                <strong>{trendResult.currentPeriod.productTurnoverNetCzk} CZK</strong>
+              </p>
+              <p>
+                Previous ({trendResult.previousPeriod.from} - {trendResult.previousPeriod.to}):{" "}
+                <strong>{trendResult.previousPeriod.productTurnoverNetCzk} CZK</strong>
+              </p>
+              <p>
+                Change: <strong>{trendResult.comparison.absoluteChangeNetCzk} CZK</strong> (
+                <strong>
+                  {trendResult.comparison.changePct ? `${trendResult.comparison.changePct}%` : "n/a"}
+                </strong>
+                , {trendResult.comparison.direction})
+              </p>
             </article>
           )}
         </section>

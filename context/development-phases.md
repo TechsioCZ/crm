@@ -3,7 +3,7 @@
 Datum: 2026-05-24
 Pocet fazi: 8
 Cil: po kazde fazi mit funkcni celek, ktery jde rucne overit.
-Aktualni stav: Faze 1-7 dokonceny (2026-05-24), faze 8 pending.
+Aktualni stav: Faze 1-8 dokonceny (2026-05-24).
 
 ## Faze 1 - Zaklad projektu a prihlaseni
 ### Dodame
@@ -94,6 +94,8 @@ Aktualni stav: Faze 1-7 dokonceny (2026-05-24), faze 8 pending.
 - Poznamky a ukoly navazane na zakaznika s opravnenim
 - Zakladni dashboard vyvoje obratu v case
 - Stabilizace, bugfixy, seed data, finalni UX
+
+Status: Dokonceno (2026-05-24)
 
 ### Manualni test
 1. Obchodnik prida poznamku ke svemu zakaznikovi -> ulozi se autor a datum.

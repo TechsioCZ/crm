@@ -2,7 +2,7 @@
 
 Datum: 2026-05-24
 Status: Aktualni zdroj pravdy pro scope, stack, pripravenost prostredi a postup fazi.
-Postup: Faze 1-7 jsou dokoncene, faze 8 pending.
+Postup: Faze 1-8 jsou dokoncene (MVP scope pokryty).
 
 ## 1) Cíl projektu
 Vytvorit MVP analytickeho CRM pro obchodniky, kde obchodnik:
@@ -65,4 +65,5 @@ Aktualni a zavazne dokumenty v `context/` jsou:
 10. `phase-5-completion-2026-05-24.md`
 11. `phase-6-completion-2026-05-24.md`
 12. `phase-7-completion-2026-05-24.md`
+13. `phase-8-completion-2026-05-24.md`
 
