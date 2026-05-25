@@ -206,6 +206,8 @@ type RecommendationOpportunity = {
   minPenetrationPct: string;
 };
 
+type WorkspaceTab = "customers" | "analytics" | "recommendations" | "crm" | "admin" | "imports";
+
 type TaskPriority = "low" | "medium" | "high";
 
 type CrmNote = {
@@ -430,6 +432,7 @@ function App() {
   const [trendTo, setTrendTo] = useState("2026-03-31");
   const [trendResult, setTrendResult] = useState<TurnoverTrendResponse | null>(null);
   const [isCrmLoading, setIsCrmLoading] = useState(false);
+  const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceTab>("customers");
 
   const isLoggedIn = useMemo(() => Boolean(token), [token]);
   const isAdmin = user?.role === "admin";
@@ -954,6 +957,7 @@ function App() {
       const body = (await response.json()) as LoginResponse;
       setToken(body.accessToken);
       setUser(body.user);
+      setActiveWorkspace("customers");
       setAuthMessage(`Logged in as ${body.user.email} (${body.user.role})`);
 
       const firstVisibleCustomerId = await loadVisibleCustomers(body.accessToken);
@@ -1033,6 +1037,7 @@ function App() {
     setGroupMessage("No group action yet.");
     setRuleMessage("No rule action yet.");
     setCrmMessage("CRM panel not loaded yet.");
+    setActiveWorkspace("customers");
   };
 
   const handleAssign = async (customerId: number) => {
@@ -1501,744 +1506,650 @@ function App() {
     }
   };
 
+  const tabs: Array<{ id: WorkspaceTab; label: string; adminOnly?: boolean }> = [
+    { id: "customers", label: "Contacts" },
+    { id: "analytics", label: "Analytics" },
+    { id: "recommendations", label: "Smart Lists" },
+    { id: "crm", label: "Tasks" },
+    { id: "admin", label: "Admin", adminOnly: true },
+    { id: "imports", label: "Imports", adminOnly: true }
+  ];
+  const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
+  const resolvedWorkspace = visibleTabs.some((tab) => tab.id === activeWorkspace) ? activeWorkspace : "customers";
+
+  if (!isLoggedIn) {
+    return (
+      <main className="auth-layout">
+        <section className="auth-card" aria-label="login screen">
+          <p className="eyebrow">CRM MVP</p>
+          <h1>Login</h1>
+          <p className="subtitle">Sign in first. The full CRM workspace opens after authentication.</p>
+
+          <section className="status-grid" aria-label="service status">
+            <article className="status-card">
+              <h2>API</h2>
+              <p>{healthStatus}</p>
+            </article>
+            <article className="status-card">
+              <h2>Database</h2>
+              <p>{dbStatus}</p>
+            </article>
+          </section>
+
+          <form className="form" onSubmit={handleLogin}>
+            <label>
+              Email
+              <input value={email} onChange={(e) => setEmail(e.target.value)} />
+            </label>
+            <label>
+              Password
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </label>
+            <button type="submit">Login</button>
+          </form>
+
+          <p className="message">{authMessage}</p>
+        </section>
+      </main>
+    );
+  }
+
   return (
-    <main className="page">
-      <header className="hero">
-        <p className="eyebrow">Phase 8</p>
-        <h1>CRM MVP Final Validation</h1>
-        <p className="subtitle">
-          Validate auth, visibility, XML imports, analytics, recommendations, CRM notes/tasks, and turnover trend.
-        </p>
-      </header>
-
-      <section className="status-grid" aria-label="service status">
-        <article className="status-card">
-          <h2>API</h2>
-          <p>{healthStatus}</p>
-        </article>
-        <article className="status-card">
-          <h2>Database</h2>
-          <p>{dbStatus}</p>
-        </article>
-      </section>
-
-      <section className="panel" aria-label="login panel">
-        <form className="form" onSubmit={handleLogin}>
-          <label>
-            Email
-            <input value={email} onChange={(e) => setEmail(e.target.value)} />
-          </label>
-          <label>
-            Password
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          </label>
-          <button type="submit">Login</button>
-        </form>
-
-        <div className="actions">
-          <button type="button" onClick={handleMe} disabled={!isLoggedIn}>
-            Test /api/auth/me
-          </button>
-          <button type="button" onClick={handleLogout} disabled={!isLoggedIn}>
-            Logout
-          </button>
+    <main className="crm-shell">
+      <aside className="crm-sidebar">
+        <div>
+          <h1 className="brand">CRM MVP</h1>
+          <p className="sidebar-subtitle">{user?.email}</p>
+          <p className="sidebar-subtitle">{user?.role}</p>
         </div>
 
-        <p className="message">{authMessage}</p>
-      </section>
+        <label className="search-box">
+          Search
+          <input value={manualCustomerId} onChange={(e) => setManualCustomerId(e.target.value)} placeholder="Customer ID" />
+        </label>
 
-      {isLoggedIn && (
-        <section className="panel" aria-label="role visibility panel">
-          <div className="admin-head">
-            <h2>Role Visibility Panel</h2>
-            <button type="button" onClick={() => token && loadVisibleCustomers(token)}>
-              Refresh visible customers
-            </button>
-          </div>
-
-          <p className="message">{customerMessage}</p>
-
-          <p>
-            Logged role: <strong>{user?.role}</strong>
-          </p>
-
-          <p>
-            Visible customers: <strong>{visibleCustomers.length}</strong>
-          </p>
-
-          <div className="assign-row">
-            <select
-              value={selectedVisibleCustomerId ?? ""}
-              onChange={(e) => setSelectedVisibleCustomerId(Number(e.target.value))}
+        <nav className="side-nav" aria-label="workspace sections">
+          {visibleTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={resolvedWorkspace === tab.id ? "tab-btn active" : "tab-btn"}
+              onClick={() => setActiveWorkspace(tab.id)}
             >
-              {visibleCustomers.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.id} - {item.name}
-                </option>
-              ))}
-            </select>
-            <button type="button" onClick={handleLoadSelectedDetail}>
-              Load selected detail
+              {tab.label}
             </button>
-          </div>
+          ))}
+        </nav>
 
-          <div className="assign-row">
-            <input
-              value={manualCustomerId}
-              onChange={(e) => setManualCustomerId(e.target.value)}
-              placeholder="Customer ID (try 1 or 2)"
-            />
-            <button type="button" onClick={handleLoadManualDetail}>
-              Load detail by ID
+        <div className="status-mini">
+          <strong>API:</strong> {healthStatus}
+        </div>
+        <div className="status-mini">
+          <strong>DB:</strong> {dbStatus}
+        </div>
+
+        <button type="button" onClick={handleLogout}>
+          Logout
+        </button>
+      </aside>
+
+      <section className="crm-main">
+        <header className="crm-topbar">
+          <div className="top-tabs">
+            {visibleTabs.map((tab) => (
+              <button
+                key={`top-${tab.id}`}
+                type="button"
+                className={resolvedWorkspace === tab.id ? "top-tab active" : "top-tab"}
+                onClick={() => setActiveWorkspace(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <div className="top-actions">
+            <button type="button" onClick={handleMe}>
+              Check Session
             </button>
+            <span className="hint">{authMessage}</span>
           </div>
+        </header>
 
-          {customerDetail && (
-            <article className="customer-card">
-              <h3>
-                Detail: {customerDetail.id} - {customerDetail.name}
-              </h3>
-              <p>
-                Current rep: <strong>{customerDetail.currentAssignment?.salesRep.name ?? "Unassigned"}</strong>
-              </p>
-              <details>
-                <summary>History ({customerDetail.assignmentHistory.length})</summary>
-                <ul className="history-list">
-                  {customerDetail.assignmentHistory.map((item) => (
-                    <li key={item.id}>
-                      {item.salesRep.name}: {new Date(item.startedAt).toLocaleString()} -{" "}
-                      {item.endedAt ? new Date(item.endedAt).toLocaleString() : "active"}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </article>
-          )}
-        </section>
-      )}
-
-      {isLoggedIn && (
-        <section className="panel" aria-label="product analytics panel">
-          <div className="admin-head">
-            <h2>Product Analytics Panel</h2>
-            <button type="button" onClick={handleLoadSelectedAnalytics} disabled={isAnalyticsLoading}>
-              {isAnalyticsLoading ? "Loading..." : "Load selected analytics"}
-            </button>
-          </div>
-
-          <p className="message">{analyticsMessage}</p>
-
-          <div className="date-row">
-            <label>
-              From date
-              <input type="date" value={analyticsFrom} onChange={(e) => setAnalyticsFrom(e.target.value)} />
-            </label>
-            <label>
-              To date
-              <input type="date" value={analyticsTo} onChange={(e) => setAnalyticsTo(e.target.value)} />
-            </label>
-          </div>
-
-          <div className="assign-row">
-            <button type="button" onClick={handleLoadSelectedAnalytics} disabled={isAnalyticsLoading}>
-              Analytics for selected customer
-            </button>
-            <button type="button" onClick={handleLoadManualAnalytics} disabled={isAnalyticsLoading}>
-              Analytics by manual ID
-            </button>
-          </div>
-
-          {analyticsResult && (
-            <article className="customer-card">
-              <h3>
-                {analyticsResult.customer.name} ({analyticsResult.customer.id})
-              </h3>
-              <p>
-                Period: <strong>{analyticsResult.period.from}</strong> to <strong>{analyticsResult.period.to}</strong>
-              </p>
-              <p>
-                Product turnover (net CZK): <strong>{analyticsResult.totals.productNetCzk}</strong>
-              </p>
-              <p>
-                Top product penetration: <strong>{analyticsResult.topProductStats.topProductsBoughtCount}</strong> /{" "}
-                <strong>{analyticsResult.topProductStats.topProductsTotalCount}</strong> (
-                <strong>{analyticsResult.topProductStats.topProductsPenetrationPct}%</strong>)
-              </p>
-              <p>
-                Shipping excluded: <strong>{analyticsResult.totals.shippingNetCzk}</strong> | Payment excluded:{" "}
-                <strong>{analyticsResult.totals.paymentNetCzk}</strong>
-              </p>
-              <p>
-                Orders: <strong>{analyticsResult.totals.ordersCount}</strong> | Item lines:{" "}
-                <strong>{analyticsResult.totals.itemLinesCount}</strong>
-              </p>
-
-              <details>
-                <summary>Product breakdown ({analyticsResult.productBreakdown.length})</summary>
-                <ul className="history-list">
-                  {analyticsResult.productBreakdown.map((product) => (
-                    <li key={product.key}>
-                      {product.name ?? product.sku ?? "Unnamed product"} ({product.category ?? "Uncategorized"}):{" "}
-                      {product.turnoverNetCzk} CZK
-                    </li>
-                  ))}
-                </ul>
-              </details>
-
-              <details>
-                <summary>Category breakdown ({analyticsResult.categoryBreakdown.length})</summary>
-                <ul className="history-list">
-                  {analyticsResult.categoryBreakdown.map((category) => (
-                    <li key={category.category}>
-                      {category.category}: {category.turnoverNetCzk} CZK ({category.sharePct}%)
-                    </li>
-                  ))}
-                </ul>
-              </details>
-
-              <details>
-                <summary>
-                  Never bought categories ({analyticsResult.catalogCategoryStats.neverBoughtCategories.length} /{" "}
-                  {analyticsResult.catalogCategoryStats.totalCatalogCategories})
-                </summary>
-                <ul className="history-list">
-                  {analyticsResult.catalogCategoryStats.neverBoughtCategories.map((categoryName) => (
-                    <li key={categoryName}>{categoryName}</li>
-                  ))}
-                </ul>
-              </details>
-
-              <details>
-                <summary>Never bought top products ({analyticsResult.topProductStats.neverBoughtTopProducts.length})</summary>
-                <ul className="history-list">
-                  {analyticsResult.topProductStats.neverBoughtTopProducts.map((product) => (
-                    <li key={product.id}>
-                      {product.name} {product.sku ? `(${product.sku})` : ""}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-
-              <details>
-                <summary>Bought top products ({analyticsResult.topProductStats.boughtTopProducts.length})</summary>
-                <ul className="history-list">
-                  {analyticsResult.topProductStats.boughtTopProducts.map((product) => (
-                    <li key={product.id}>
-                      {product.name} {product.sku ? `(${product.sku})` : ""}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </article>
-          )}
-        </section>
-      )}
-
-      {isLoggedIn && (
-        <section className="panel" aria-label="crm panel">
-          <div className="admin-head">
-            <h2>CRM Notes, Tasks & Turnover Trend</h2>
-            <button type="button" onClick={() => token && loadMyTasks(token)} disabled={isCrmLoading}>
-              {isCrmLoading ? "Loading..." : "Refresh my tasks"}
-            </button>
-          </div>
-
-          <p className="message">{crmMessage}</p>
-
-          <div className="date-row">
-            <label>
-              Trend from
-              <input type="date" value={trendFrom} onChange={(e) => setTrendFrom(e.target.value)} />
-            </label>
-            <label>
-              Trend to
-              <input type="date" value={trendTo} onChange={(e) => setTrendTo(e.target.value)} />
-            </label>
-          </div>
-
-          <div className="actions">
-            <button type="button" onClick={handleLoadSelectedCrm} disabled={isCrmLoading}>
-              Load CRM for selected customer
-            </button>
-            <button type="button" onClick={handleLoadManualCrm} disabled={isCrmLoading}>
-              Load CRM by manual ID
-            </button>
-            <button type="button" onClick={handleLoadSelectedTrend} disabled={isCrmLoading}>
-              Trend for selected customer
-            </button>
-            <button type="button" onClick={handleLoadManualTrend} disabled={isCrmLoading}>
-              Trend by manual ID
-            </button>
-          </div>
-
-          <div className="card-grid">
-            <article className="customer-card">
-              <h3>Add note to selected customer</h3>
-              <label>
-                Note text
-                <textarea value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={4} />
-              </label>
-              <div className="actions">
-                <button type="button" onClick={handleCreateNote} disabled={isCrmLoading}>
-                  Create note
-                </button>
-              </div>
-            </article>
-
-            <article className="customer-card">
-              <h3>Add task to selected customer</h3>
-              <label>
-                Description
-                <input value={taskDescription} onChange={(e) => setTaskDescription(e.target.value)} />
-              </label>
-              <div className="date-row">
-                <label>
-                  Due date
-                  <input type="date" value={taskDueDate} onChange={(e) => setTaskDueDate(e.target.value)} />
-                </label>
-                <label>
-                  Priority
-                  <select value={taskPriority} onChange={(e) => setTaskPriority(e.target.value as TaskPriority)}>
-                    <option value="low">low</option>
-                    <option value="medium">medium</option>
-                    <option value="high">high</option>
-                  </select>
-                </label>
-              </div>
-              <div className="actions">
-                <button type="button" onClick={handleCreateTask} disabled={isCrmLoading}>
-                  Create task
-                </button>
-              </div>
-            </article>
-          </div>
-
-          <div className="card-grid">
-            <article className="customer-card">
-              <h3>Customer notes ({notes.length})</h3>
-              <ul className="history-list">
-                {notes.map((note) => (
-                  <li key={note.id}>
-                    {new Date(note.createdAt).toLocaleString()}: {note.text} ({note.author.name})
-                  </li>
-                ))}
-              </ul>
-            </article>
-
-            <article className="customer-card">
-              <h3>Customer tasks ({customerTasks.length})</h3>
-              <ul className="history-list">
-                {customerTasks.map((task) => (
-                  <li key={task.id}>
-                    {task.description} | due {new Date(task.dueDate).toLocaleDateString()} | {task.priority} | {task.status}
-                  </li>
-                ))}
-              </ul>
-            </article>
-          </div>
-
-          <article className="customer-card">
-            <h3>My tasks ({myTasks.length})</h3>
-            <ul className="history-list">
-              {myTasks.map((task) => (
-                <li key={`mine-${task.id}`}>
-                  {task.customer.name}: {task.description} | due {new Date(task.dueDate).toLocaleDateString()} |{" "}
-                  {task.priority}
-                </li>
-              ))}
-            </ul>
-          </article>
-
-          {trendResult && (
-            <article className="customer-card">
-              <h3>
-                Turnover trend: {trendResult.customer.name} ({trendResult.customer.id})
-              </h3>
-              <p>
-                Current ({trendResult.currentPeriod.from} - {trendResult.currentPeriod.to}):{" "}
-                <strong>{trendResult.currentPeriod.productTurnoverNetCzk} CZK</strong>
-              </p>
-              <p>
-                Previous ({trendResult.previousPeriod.from} - {trendResult.previousPeriod.to}):{" "}
-                <strong>{trendResult.previousPeriod.productTurnoverNetCzk} CZK</strong>
-              </p>
-              <p>
-                Change: <strong>{trendResult.comparison.absoluteChangeNetCzk} CZK</strong> (
-                <strong>
-                  {trendResult.comparison.changePct ? `${trendResult.comparison.changePct}%` : "n/a"}
-                </strong>
-                , {trendResult.comparison.direction})
-              </p>
-            </article>
-          )}
-        </section>
-      )}
-
-      {isLoggedIn && (
-        <section className="panel" aria-label="recommendation panel">
-          <div className="admin-head">
-            <h2>Recommendation Rules Panel</h2>
-            <button type="button" onClick={handleRefreshRecommendations} disabled={isRecommendationLoading}>
-              {isRecommendationLoading ? "Refreshing..." : "Refresh recommendations"}
-            </button>
-          </div>
-
-          <p className="message">{recommendationMessage}</p>
-
-          <div className="card-grid">
-            <article className="customer-card">
-              <h3>Create customer group</h3>
-              <label>
-                Group name
-                <input value={groupName} onChange={(e) => setGroupName(e.target.value)} />
-              </label>
-
-              <div className="date-row">
-                <label>
-                  Scope
+        <section className="workspace-scroll">
+          {resolvedWorkspace === "customers" && (
+            <div className="workspace-grid">
+              <article className="panel">
+                <div className="admin-head">
+                  <h2>Role Visibility</h2>
+                  <button type="button" onClick={() => token && loadVisibleCustomers(token)}>
+                    Refresh
+                  </button>
+                </div>
+                <p className="message">{customerMessage}</p>
+                <p>
+                  Visible customers: <strong>{visibleCustomers.length}</strong>
+                </p>
+                <div className="assign-row">
                   <select
-                    value={isAdmin ? groupScope : "private"}
-                    onChange={(e) => setGroupScope(e.target.value as "global" | "private")}
-                    disabled={!isAdmin}
+                    value={selectedVisibleCustomerId ?? ""}
+                    onChange={(e) => setSelectedVisibleCustomerId(Number(e.target.value))}
                   >
-                    <option value="global">global</option>
-                    <option value="private">private</option>
-                  </select>
-                </label>
-                <label>
-                  Active months back
-                  <input value={groupMonthsBack} onChange={(e) => setGroupMonthsBack(e.target.value)} />
-                </label>
-              </div>
-
-              <div className="actions">
-                <button type="button" onClick={handleCreateGroup} disabled={isGroupSubmitting}>
-                  {isGroupSubmitting ? "Creating..." : "Create group"}
-                </button>
-              </div>
-              <p className="hint">{groupMessage}</p>
-            </article>
-
-            <article className="customer-card">
-              <h3>Create recommendation rule</h3>
-
-              <label>
-                Rule name
-                <input value={ruleName} onChange={(e) => setRuleName(e.target.value)} />
-              </label>
-
-              <div className="date-row">
-                <label>
-                  Scope
-                  <select
-                    value={isAdmin ? ruleScope : "private"}
-                    onChange={(e) => setRuleScope(e.target.value as "global" | "private")}
-                    disabled={!isAdmin}
-                  >
-                    <option value="global">global</option>
-                    <option value="private">private</option>
-                  </select>
-                </label>
-
-                <label>
-                  Target type
-                  <select
-                    value={ruleTargetType}
-                    onChange={(e) => setRuleTargetType(e.target.value as "category" | "top_product")}
-                  >
-                    <option value="category">category</option>
-                    <option value="top_product">top_product</option>
-                  </select>
-                </label>
-              </div>
-
-              <div className="date-row">
-                <label>
-                  Target group
-                  <select
-                    value={ruleGroupId ?? ""}
-                    onChange={(e) => setRuleGroupId(e.target.value ? Number(e.target.value) : null)}
-                  >
-                    <option value="">Select group</option>
-                    {groups.map((group) => (
-                      <option key={group.id} value={group.id}>
-                        {group.name} ({group.scope})
+                    {visibleCustomers.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.id} - {item.name}
                       </option>
                     ))}
                   </select>
-                </label>
+                  <button type="button" onClick={handleLoadSelectedDetail}>
+                    Load selected
+                  </button>
+                </div>
+                <div className="assign-row">
+                  <input value={manualCustomerId} onChange={(e) => setManualCustomerId(e.target.value)} />
+                  <button type="button" onClick={handleLoadManualDetail}>
+                    Load by ID
+                  </button>
+                </div>
+              </article>
 
+              <article className="panel">
+                <h2>Customer Detail</h2>
+                {customerDetail ? (
+                  <article className="customer-card">
+                    <h3>
+                      {customerDetail.id} - {customerDetail.name}
+                    </h3>
+                    <p>
+                      Current rep: <strong>{customerDetail.currentAssignment?.salesRep.name ?? "Unassigned"}</strong>
+                    </p>
+                    <details>
+                      <summary>Assignment history ({customerDetail.assignmentHistory.length})</summary>
+                      <ul className="history-list">
+                        {customerDetail.assignmentHistory.map((item) => (
+                          <li key={item.id}>
+                            {item.salesRep.name}: {new Date(item.startedAt).toLocaleString()} -{" "}
+                            {item.endedAt ? new Date(item.endedAt).toLocaleString() : "active"}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </article>
+                ) : (
+                  <p className="hint">No customer detail loaded.</p>
+                )}
+              </article>
+
+              <article className="panel">
+                <h2>Selected Opportunities</h2>
+                <div className="actions">
+                  <button type="button" onClick={handleLoadSelectedRecommendations} disabled={isRecommendationLoading}>
+                    Load selected opportunities
+                  </button>
+                  <button type="button" onClick={handleLoadManualRecommendations} disabled={isRecommendationLoading}>
+                    Load manual opportunities
+                  </button>
+                </div>
+                <ul className="history-list">
+                  {customerRecommendations.map((item) => (
+                    <li key={`customer-${item.customerId}-${item.ruleId}`}>
+                      {item.customerName}: {item.ruleName} ({item.targetType}:{item.targetValue})
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            </div>
+          )}
+
+          {resolvedWorkspace === "analytics" && (
+            <div className="workspace-grid">
+              <article className="panel">
+                <h2>Analytics Controls</h2>
+                <p className="message">{analyticsMessage}</p>
+                <div className="date-row">
+                  <label>
+                    From date
+                    <input type="date" value={analyticsFrom} onChange={(e) => setAnalyticsFrom(e.target.value)} />
+                  </label>
+                  <label>
+                    To date
+                    <input type="date" value={analyticsTo} onChange={(e) => setAnalyticsTo(e.target.value)} />
+                  </label>
+                </div>
+                <div className="actions">
+                  <button type="button" onClick={handleLoadSelectedAnalytics} disabled={isAnalyticsLoading}>
+                    Selected customer analytics
+                  </button>
+                  <button type="button" onClick={handleLoadManualAnalytics} disabled={isAnalyticsLoading}>
+                    Manual customer analytics
+                  </button>
+                </div>
+              </article>
+
+              <article className="panel">
+                <h2>Product Analytics</h2>
+                {analyticsResult ? (
+                  <article className="customer-card">
+                    <h3>
+                      {analyticsResult.customer.name} ({analyticsResult.customer.id})
+                    </h3>
+                    <p>
+                      Product turnover: <strong>{analyticsResult.totals.productNetCzk} CZK</strong>
+                    </p>
+                    <p>
+                      Top penetration: <strong>{analyticsResult.topProductStats.topProductsPenetrationPct}%</strong>
+                    </p>
+                    <details>
+                      <summary>Category breakdown ({analyticsResult.categoryBreakdown.length})</summary>
+                      <ul className="history-list">
+                        {analyticsResult.categoryBreakdown.map((category) => (
+                          <li key={category.category}>
+                            {category.category}: {category.turnoverNetCzk} CZK ({category.sharePct}%)
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                    <details>
+                      <summary>Never bought categories ({analyticsResult.catalogCategoryStats.neverBoughtCategories.length})</summary>
+                      <ul className="history-list">
+                        {analyticsResult.catalogCategoryStats.neverBoughtCategories.map((categoryName) => (
+                          <li key={categoryName}>{categoryName}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  </article>
+                ) : (
+                  <p className="hint">No analytics loaded yet.</p>
+                )}
+              </article>
+
+              <article className="panel">
+                <h2>Turnover Trend</h2>
+                <p className="message">{crmMessage}</p>
+                <div className="date-row">
+                  <label>
+                    Trend from
+                    <input type="date" value={trendFrom} onChange={(e) => setTrendFrom(e.target.value)} />
+                  </label>
+                  <label>
+                    Trend to
+                    <input type="date" value={trendTo} onChange={(e) => setTrendTo(e.target.value)} />
+                  </label>
+                </div>
+                <div className="actions">
+                  <button type="button" onClick={handleLoadSelectedTrend} disabled={isCrmLoading}>
+                    Trend for selected customer
+                  </button>
+                  <button type="button" onClick={handleLoadManualTrend} disabled={isCrmLoading}>
+                    Trend by manual ID
+                  </button>
+                </div>
+                {trendResult && (
+                  <article className="customer-card">
+                    <h3>{trendResult.customer.name}</h3>
+                    <p>
+                      Current: <strong>{trendResult.currentPeriod.productTurnoverNetCzk} CZK</strong>
+                    </p>
+                    <p>
+                      Previous: <strong>{trendResult.previousPeriod.productTurnoverNetCzk} CZK</strong>
+                    </p>
+                    <p>
+                      Change: <strong>{trendResult.comparison.changePct ? `${trendResult.comparison.changePct}%` : "n/a"}</strong>
+                    </p>
+                  </article>
+                )}
+              </article>
+            </div>
+          )}
+
+          {resolvedWorkspace === "recommendations" && (
+            <div className="workspace-grid">
+              <article className="panel">
+                <h2>Create Group</h2>
                 <label>
-                  Comparison group
-                  <select
-                    value={ruleComparisonGroupId ?? ""}
-                    onChange={(e) => setRuleComparisonGroupId(e.target.value ? Number(e.target.value) : null)}
-                  >
-                    <option value="">same as target group</option>
-                    {groups.map((group) => (
-                      <option key={group.id} value={group.id}>
-                        {group.name} ({group.scope})
-                      </option>
-                    ))}
-                  </select>
+                  Group name
+                  <input value={groupName} onChange={(e) => setGroupName(e.target.value)} />
                 </label>
-              </div>
-
-              <div className="date-row">
-                <label>
-                  Target value
-                  <input value={ruleTargetValue} onChange={(e) => setRuleTargetValue(e.target.value)} />
-                </label>
-
-                <label>
-                  Min penetration (%)
-                  <input value={ruleMinPenetrationPct} onChange={(e) => setRuleMinPenetrationPct(e.target.value)} />
-                </label>
-              </div>
-
-              <div className="actions">
-                <button type="button" onClick={handleCreateRule} disabled={isRuleSubmitting}>
-                  {isRuleSubmitting ? "Creating..." : "Create rule"}
-                </button>
-              </div>
-              <p className="hint">{ruleMessage}</p>
-            </article>
-          </div>
-
-          <div className="actions">
-            <button type="button" onClick={() => token && loadRecommendationOpportunities(token)} disabled={isRecommendationLoading}>
-              Load all visible opportunities
-            </button>
-            <button type="button" onClick={handleLoadSelectedRecommendations} disabled={isRecommendationLoading}>
-              Opportunities for selected customer
-            </button>
-            <button type="button" onClick={handleLoadManualRecommendations} disabled={isRecommendationLoading}>
-              Opportunities by manual ID
-            </button>
-          </div>
-
-          <div className="card-grid">
-            <article className="customer-card">
-              <h3>Visible groups ({groups.length})</h3>
-              <ul className="history-list">
-                {groups.map((group) => (
-                  <li key={group.id}>
-                    #{group.id} {group.name} [{group.scope}] members {group.visibleMembers}/{group.totalMembers}
-                  </li>
-                ))}
-              </ul>
-            </article>
-
-            <article className="customer-card">
-              <h3>Visible rules ({rules.length})</h3>
-              <ul className="history-list">
-                {rules.map((rule) => (
-                  <li key={rule.id}>
-                    #{rule.id} {rule.name} [{rule.scope}] - {rule.targetType}:{rule.targetValue} (min{" "}
-                    {rule.minPenetrationPct}%)
-                  </li>
-                ))}
-              </ul>
-            </article>
-          </div>
-
-          <article className="customer-card">
-            <h3>All visible opportunities ({opportunities.length})</h3>
-            <ul className="history-list">
-              {opportunities.map((item) => (
-                <li key={`${item.customerId}-${item.ruleId}`}>
-                  {item.customerName} to {item.ruleName} ({item.targetType}:{item.targetValue}, penetration{" "}
-                  {item.comparisonPenetrationPct}% / min {item.minPenetrationPct}%)
-                </li>
-              ))}
-            </ul>
-          </article>
-
-          <article className="customer-card">
-            <h3>Selected customer opportunities ({customerRecommendations.length})</h3>
-            <ul className="history-list">
-              {customerRecommendations.map((item) => (
-                <li key={`customer-${item.customerId}-${item.ruleId}`}>
-                  {item.customerName} to {item.ruleName} ({item.targetType}:{item.targetValue}, penetration{" "}
-                  {item.comparisonPenetrationPct}% / min {item.minPenetrationPct}%)
-                </li>
-              ))}
-            </ul>
-          </article>
-        </section>
-      )}
-
-      {isAdmin && (
-        <section className="panel admin-panel" aria-label="admin assignments">
-          <div className="admin-head">
-            <h2>Admin Assignment Panel</h2>
-            <button type="button" onClick={() => token && loadAdminData(token)} disabled={isAdminLoading}>
-              Refresh
-            </button>
-          </div>
-
-          <p className="message">{adminMessage}</p>
-
-          <div className="customer-list">
-            {customers.map((customer) => {
-              const selectedRepId = selectedRepByCustomer[customer.id] ?? 0;
-
-              return (
-                <article className="customer-card" key={customer.id}>
-                  <h3>{customer.name}</h3>
-                  <p>
-                    Current rep: <strong>{customer.currentAssignment?.salesRep.name ?? "Unassigned"}</strong>
-                  </p>
-
-                  <div className="assign-row">
+                <div className="date-row">
+                  <label>
+                    Scope
                     <select
-                      value={selectedRepId}
-                      onChange={(e) =>
-                        setSelectedRepByCustomer((prev) => ({
-                          ...prev,
-                          [customer.id]: Number(e.target.value)
-                        }))
-                      }
+                      value={isAdmin ? groupScope : "private"}
+                      onChange={(e) => setGroupScope(e.target.value as "global" | "private")}
+                      disabled={!isAdmin}
                     >
-                      {salesReps.map((rep) => (
-                        <option key={rep.id} value={rep.id}>
-                          {rep.name} ({rep.activeCustomerCount} active)
+                      <option value="global">global</option>
+                      <option value="private">private</option>
+                    </select>
+                  </label>
+                  <label>
+                    Active months back
+                    <input value={groupMonthsBack} onChange={(e) => setGroupMonthsBack(e.target.value)} />
+                  </label>
+                </div>
+                <div className="actions">
+                  <button type="button" onClick={handleCreateGroup} disabled={isGroupSubmitting}>
+                    {isGroupSubmitting ? "Creating..." : "Create group"}
+                  </button>
+                </div>
+                <p className="hint">{groupMessage}</p>
+              </article>
+
+              <article className="panel">
+                <h2>Create Rule</h2>
+                <label>
+                  Rule name
+                  <input value={ruleName} onChange={(e) => setRuleName(e.target.value)} />
+                </label>
+                <div className="date-row">
+                  <label>
+                    Scope
+                    <select
+                      value={isAdmin ? ruleScope : "private"}
+                      onChange={(e) => setRuleScope(e.target.value as "global" | "private")}
+                      disabled={!isAdmin}
+                    >
+                      <option value="global">global</option>
+                      <option value="private">private</option>
+                    </select>
+                  </label>
+                  <label>
+                    Target type
+                    <select value={ruleTargetType} onChange={(e) => setRuleTargetType(e.target.value as "category" | "top_product")}>
+                      <option value="category">category</option>
+                      <option value="top_product">top_product</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="date-row">
+                  <label>
+                    Target group
+                    <select
+                      value={ruleGroupId ?? ""}
+                      onChange={(e) => setRuleGroupId(e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">Select group</option>
+                      {groups.map((group) => (
+                        <option key={group.id} value={group.id}>
+                          {group.name} ({group.scope})
                         </option>
                       ))}
                     </select>
-                    <button type="button" onClick={() => handleAssign(customer.id)}>
-                      Reassign
-                    </button>
-                  </div>
-
-                  <details>
-                    <summary>Assignment history ({customer.assignmentHistory.length})</summary>
-                    <ul className="history-list">
-                      {customer.assignmentHistory.map((item) => (
-                        <li key={item.id}>
-                          {item.salesRep.name}: {new Date(item.startedAt).toLocaleString()} -{" "}
-                          {item.endedAt ? new Date(item.endedAt).toLocaleString() : "active"}
-                        </li>
+                  </label>
+                  <label>
+                    Comparison group
+                    <select
+                      value={ruleComparisonGroupId ?? ""}
+                      onChange={(e) => setRuleComparisonGroupId(e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">same as target group</option>
+                      {groups.map((group) => (
+                        <option key={group.id} value={group.id}>
+                          {group.name} ({group.scope})
+                        </option>
                       ))}
-                    </ul>
-                  </details>
-                </article>
-              );
-            })}
-          </div>
-        </section>
-      )}
+                    </select>
+                  </label>
+                </div>
+                <div className="date-row">
+                  <label>
+                    Target value
+                    <input value={ruleTargetValue} onChange={(e) => setRuleTargetValue(e.target.value)} />
+                  </label>
+                  <label>
+                    Min penetration (%)
+                    <input value={ruleMinPenetrationPct} onChange={(e) => setRuleMinPenetrationPct(e.target.value)} />
+                  </label>
+                </div>
+                <div className="actions">
+                  <button type="button" onClick={handleCreateRule} disabled={isRuleSubmitting}>
+                    {isRuleSubmitting ? "Creating..." : "Create rule"}
+                  </button>
+                  <button type="button" onClick={handleRefreshRecommendations} disabled={isRecommendationLoading}>
+                    Refresh recommendations
+                  </button>
+                </div>
+                <p className="hint">{ruleMessage}</p>
+              </article>
 
-      {isAdmin && (
-        <section className="panel" aria-label="xml import panel">
-          <div className="admin-head">
-            <h2>XML Import Panel</h2>
-            <button type="button" onClick={() => token && loadImportHistory(token)}>
-              Refresh import history
-            </button>
-          </div>
-
-          <p className="message">{importMessage}</p>
-
-          <div className="actions">
-            <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_CREATE)}>
-              Load sample: create
-            </button>
-            <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_UPDATE)}>
-              Load sample: update
-            </button>
-            <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_INVALID)}>
-              Load sample: invalid
-            </button>
-            <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_PHASE6)}>
-              Load sample: phase6 analytics
-            </button>
-          </div>
-
-          <label>
-            Source name
-            <input value={importSourceName} onChange={(e) => setImportSourceName(e.target.value)} />
-          </label>
-
-          <label>
-            XML payload
-            <textarea
-              className="xml-editor"
-              value={xmlPayload}
-              onChange={(e) => setXmlPayload(e.target.value)}
-              rows={16}
-            />
-          </label>
-
-          <div className="actions">
-            <button type="button" onClick={handleRunXmlImport} disabled={isImporting}>
-              {isImporting ? "Importing..." : "Run XML import"}
-            </button>
-          </div>
-
-          {latestImport && (
-            <article className="customer-card">
-              <h3>Latest import run #{latestImport.run.id}</h3>
-              <p>
-                Totals: <strong>{latestImport.run.totalRecords}</strong> records, created{" "}
-                <strong>{latestImport.run.createdOrders}</strong>, updated <strong>{latestImport.run.updatedOrders}</strong>,
-                errors <strong>{latestImport.run.errorRecords}</strong>.
-              </p>
-              <p>
-                Created order IDs: <strong>{latestImport.createdOrderIds.join(", ") || "-"}</strong>
-              </p>
-              <p>
-                Updated order IDs: <strong>{latestImport.updatedOrderIds.join(", ") || "-"}</strong>
-              </p>
-              <details>
-                <summary>Error details ({latestImport.errors.length})</summary>
-                <ul className="history-list">
-                  {latestImport.errors.map((error) => (
-                    <li key={`${error.recordIndex}-${error.message}`}>
-                      Record {error.recordIndex}: {error.message}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            </article>
-          )}
-
-          <div className="customer-list">
-            {importHistory.map((run) => (
-              <article className="customer-card" key={run.id}>
-                <h3>
-                  Import #{run.id} ({run.sourceName ?? "manual-xml"})
-                </h3>
-                <p>
-                  Created: <strong>{run.createdOrders}</strong> | Updated: <strong>{run.updatedOrders}</strong> | Errors:{" "}
-                  <strong>{run.errorRecords}</strong>
-                </p>
-                <p>
-                  Triggered by: <strong>{run.triggeredBy?.email ?? "unknown"}</strong>
-                </p>
-                <p>
-                  Started: {new Date(run.startedAt).toLocaleString()} | Finished:{" "}
-                  {run.finishedAt ? new Date(run.finishedAt).toLocaleString() : "running"}
-                </p>
+              <article className="panel">
+                <h2>Opportunities</h2>
+                <p className="message">{recommendationMessage}</p>
+                <div className="actions">
+                  <button type="button" onClick={() => token && loadRecommendationOpportunities(token)} disabled={isRecommendationLoading}>
+                    Load all visible
+                  </button>
+                  <button type="button" onClick={handleLoadSelectedRecommendations} disabled={isRecommendationLoading}>
+                    Selected customer
+                  </button>
+                  <button type="button" onClick={handleLoadManualRecommendations} disabled={isRecommendationLoading}>
+                    Manual customer
+                  </button>
+                </div>
                 <details>
-                  <summary>Sample errors ({run.totalErrorDetails})</summary>
+                  <summary>Visible groups ({groups.length})</summary>
                   <ul className="history-list">
-                    {run.sampleErrors.map((error) => (
-                      <li key={error.id}>
-                        Record {error.recordIndex}: {error.message}
+                    {groups.map((group) => (
+                      <li key={group.id}>
+                        #{group.id} {group.name} [{group.scope}] {group.visibleMembers}/{group.totalMembers}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+                <details>
+                  <summary>Visible rules ({rules.length})</summary>
+                  <ul className="history-list">
+                    {rules.map((rule) => (
+                      <li key={rule.id}>
+                        #{rule.id} {rule.name} [{rule.scope}] {rule.targetType}:{rule.targetValue}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+                <details open>
+                  <summary>All visible opportunities ({opportunities.length})</summary>
+                  <ul className="history-list">
+                    {opportunities.map((item) => (
+                      <li key={`${item.customerId}-${item.ruleId}`}>
+                        {item.customerName}: {item.ruleName} ({item.targetType}:{item.targetValue})
                       </li>
                     ))}
                   </ul>
                 </details>
               </article>
-            ))}
-          </div>
-        </section>
-      )}
+            </div>
+          )}
 
-      <footer className="footnote">
-        API: <code>{API_BASE_URL}</code>
-      </footer>
+          {resolvedWorkspace === "crm" && (
+            <div className="workspace-grid">
+              <article className="panel">
+                <div className="admin-head">
+                  <h2>CRM Actions</h2>
+                  <button type="button" onClick={() => token && loadMyTasks(token)} disabled={isCrmLoading}>
+                    {isCrmLoading ? "Loading..." : "Refresh my tasks"}
+                  </button>
+                </div>
+                <p className="message">{crmMessage}</p>
+                <div className="actions">
+                  <button type="button" onClick={handleLoadSelectedCrm} disabled={isCrmLoading}>
+                    Load selected CRM
+                  </button>
+                  <button type="button" onClick={handleLoadManualCrm} disabled={isCrmLoading}>
+                    Load manual CRM
+                  </button>
+                </div>
+                <label>
+                  Note text
+                  <textarea value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={4} />
+                </label>
+                <button type="button" onClick={handleCreateNote} disabled={isCrmLoading}>
+                  Create note
+                </button>
+                <label>
+                  Task description
+                  <input value={taskDescription} onChange={(e) => setTaskDescription(e.target.value)} />
+                </label>
+                <div className="date-row">
+                  <label>
+                    Due date
+                    <input type="date" value={taskDueDate} onChange={(e) => setTaskDueDate(e.target.value)} />
+                  </label>
+                  <label>
+                    Priority
+                    <select value={taskPriority} onChange={(e) => setTaskPriority(e.target.value as TaskPriority)}>
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                    </select>
+                  </label>
+                </div>
+                <button type="button" onClick={handleCreateTask} disabled={isCrmLoading}>
+                  Create task
+                </button>
+              </article>
+
+              <article className="panel">
+                <h2>Customer Notes ({notes.length})</h2>
+                <ul className="history-list">
+                  {notes.map((note) => (
+                    <li key={note.id}>
+                      {new Date(note.createdAt).toLocaleString()}: {note.text} ({note.author.name})
+                    </li>
+                  ))}
+                </ul>
+                <h2>Customer Tasks ({customerTasks.length})</h2>
+                <ul className="history-list">
+                  {customerTasks.map((task) => (
+                    <li key={task.id}>
+                      {task.description} | due {new Date(task.dueDate).toLocaleDateString()} | {task.priority} | {task.status}
+                    </li>
+                  ))}
+                </ul>
+              </article>
+
+              <article className="panel">
+                <h2>My Tasks ({myTasks.length})</h2>
+                <ul className="history-list">
+                  {myTasks.map((task) => (
+                    <li key={`mine-${task.id}`}>
+                      {task.customer.name}: {task.description} | due {new Date(task.dueDate).toLocaleDateString()} | {task.priority}
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            </div>
+          )}
+
+          {resolvedWorkspace === "admin" && isAdmin && (
+            <section className="panel" aria-label="admin assignments">
+              <div className="admin-head">
+                <h2>Admin Assignment Panel</h2>
+                <button type="button" onClick={() => token && loadAdminData(token)} disabled={isAdminLoading}>
+                  Refresh
+                </button>
+              </div>
+              <p className="message">{adminMessage}</p>
+              <div className="customer-list">
+                {customers.map((customer) => {
+                  const selectedRepId = selectedRepByCustomer[customer.id] ?? 0;
+                  return (
+                    <article className="customer-card" key={customer.id}>
+                      <h3>{customer.name}</h3>
+                      <p>
+                        Current rep: <strong>{customer.currentAssignment?.salesRep.name ?? "Unassigned"}</strong>
+                      </p>
+                      <div className="assign-row">
+                        <select
+                          value={selectedRepId}
+                          onChange={(e) =>
+                            setSelectedRepByCustomer((prev) => ({
+                              ...prev,
+                              [customer.id]: Number(e.target.value)
+                            }))
+                          }
+                        >
+                          {salesReps.map((rep) => (
+                            <option key={rep.id} value={rep.id}>
+                              {rep.name} ({rep.activeCustomerCount} active)
+                            </option>
+                          ))}
+                        </select>
+                        <button type="button" onClick={() => handleAssign(customer.id)}>
+                          Reassign
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {resolvedWorkspace === "imports" && isAdmin && (
+            <section className="panel" aria-label="xml import panel">
+              <div className="admin-head">
+                <h2>XML Import Panel</h2>
+                <button type="button" onClick={() => token && loadImportHistory(token)}>
+                  Refresh import history
+                </button>
+              </div>
+              <p className="message">{importMessage}</p>
+              <div className="actions">
+                <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_CREATE)}>
+                  Load sample: create
+                </button>
+                <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_UPDATE)}>
+                  Load sample: update
+                </button>
+                <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_INVALID)}>
+                  Load sample: invalid
+                </button>
+                <button type="button" onClick={() => setXmlPayload(SAMPLE_XML_PHASE6)}>
+                  Load sample: phase6 analytics
+                </button>
+              </div>
+              <label>
+                Source name
+                <input value={importSourceName} onChange={(e) => setImportSourceName(e.target.value)} />
+              </label>
+              <label>
+                XML payload
+                <textarea className="xml-editor" value={xmlPayload} onChange={(e) => setXmlPayload(e.target.value)} rows={16} />
+              </label>
+              <div className="actions">
+                <button type="button" onClick={handleRunXmlImport} disabled={isImporting}>
+                  {isImporting ? "Importing..." : "Run XML import"}
+                </button>
+              </div>
+              {latestImport && (
+                <article className="customer-card">
+                  <h3>Latest import run #{latestImport.run.id}</h3>
+                  <p>
+                    Created: <strong>{latestImport.run.createdOrders}</strong> | Updated:{" "}
+                    <strong>{latestImport.run.updatedOrders}</strong> | Errors: <strong>{latestImport.run.errorRecords}</strong>
+                  </p>
+                </article>
+              )}
+              <div className="customer-list">
+                {importHistory.map((run) => (
+                  <article className="customer-card" key={run.id}>
+                    <h3>
+                      Import #{run.id} ({run.sourceName ?? "manual-xml"})
+                    </h3>
+                    <p>
+                      Created: <strong>{run.createdOrders}</strong> | Updated: <strong>{run.updatedOrders}</strong> | Errors:{" "}
+                      <strong>{run.errorRecords}</strong>
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+        </section>
+
+        <footer className="footnote">
+          API: <code>{API_BASE_URL}</code>
+        </footer>
+      </section>
     </main>
   );
 }
