@@ -72,6 +72,10 @@ const topProductIdParamSchema = z.object({
   topProductId: z.coerce.number().int().positive()
 });
 
+const orderDbIdParamSchema = z.object({
+  orderDbId: z.coerce.number().int().positive()
+});
+
 function normalizeToken(value: string | null | undefined): string | null {
   if (!value) {
     return null;
@@ -86,6 +90,14 @@ function normalizeToken(value: string | null | undefined): string | null {
 }
 
 function toMoneyString(value: number): string {
+  return value.toFixed(2);
+}
+
+function decimalToMoneyOrNull(value: Prisma.Decimal | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
   return value.toFixed(2);
 }
 
@@ -323,6 +335,10 @@ workspaceRouter.get("/products", async (req, res) => {
         sku: product.sku,
         name: product.name,
         categoryName: product.categoryName,
+        unitPriceNetCzk: decimalToMoneyOrNull(product.unitPriceNetCzk),
+        stockQuantity: product.stockQuantity,
+        historicalSalesQty: product.historicalSalesQty,
+        incomingFromSupplierQty: product.incomingFromSupplierQty,
         isActive: product.isActive,
         turnoverNetCzk: stats?.turnover ?? "0.00",
         orderItemLines: stats?.lines ?? 0,
@@ -471,6 +487,123 @@ workspaceRouter.get("/orders", async (req, res) => {
     summary: {
       count: orders.length
     }
+  });
+});
+
+workspaceRouter.get("/orders/:orderDbId", async (req, res) => {
+  const paramParsed = orderDbIdParamSchema.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ message: "Invalid order id." });
+    return;
+  }
+
+  const authUser = req.authUser!;
+  const orderDbId = paramParsed.data.orderDbId;
+
+  const order = await prisma.order.findFirst({
+    where: {
+      AND: [getOrderVisibilityWhere(authUser), { id: orderDbId }]
+    },
+    include: {
+      customer: {
+        include: {
+          assignments: {
+            where: { endedAt: null },
+            orderBy: { startedAt: "desc" },
+            take: 1,
+            include: {
+              salesRep: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true
+                }
+              }
+            }
+          }
+        }
+      },
+      items: {
+        where: {
+          lineType: "product"
+        },
+        orderBy: { id: "asc" }
+      }
+    }
+  });
+
+  if (!order) {
+    res.status(404).json({ message: "Order not found." });
+    return;
+  }
+
+  const skuCandidates = [...new Set(order.items.map((item) => item.sku?.trim()).filter((item): item is string => Boolean(item)))];
+  const nameCandidates = [...new Set(order.items.map((item) => item.name?.trim()).filter((item): item is string => Boolean(item)))];
+
+  const productRows =
+    skuCandidates.length === 0 && nameCandidates.length === 0
+      ? []
+      : await prisma.globalTopProduct.findMany({
+          where: {
+            OR: [
+              ...skuCandidates.map((sku) => ({ sku: { equals: sku, mode: "insensitive" as const } })),
+              ...nameCandidates.map((name) => ({ name: { equals: name, mode: "insensitive" as const } }))
+            ]
+          },
+          select: {
+            id: true,
+            sku: true,
+            name: true,
+            unitPriceNetCzk: true
+          }
+        });
+
+  const productsBySku = new Map<string, { id: number; name: string; unitPriceNetCzk: Prisma.Decimal | null }>();
+  const productsByName = new Map<string, { id: number; name: string; unitPriceNetCzk: Prisma.Decimal | null }>();
+  for (const product of productRows) {
+    const skuToken = normalizeToken(product.sku);
+    const nameToken = normalizeToken(product.name);
+    if (skuToken) {
+      productsBySku.set(skuToken, { id: product.id, name: product.name, unitPriceNetCzk: product.unitPriceNetCzk });
+    }
+    if (nameToken) {
+      productsByName.set(nameToken, { id: product.id, name: product.name, unitPriceNetCzk: product.unitPriceNetCzk });
+    }
+  }
+
+  const products = order.items.map((item) => {
+    const matchBySku = normalizeToken(item.sku);
+    const matchByName = normalizeToken(item.name);
+    const productMatch = (matchBySku ? productsBySku.get(matchBySku) : undefined) ?? (matchByName ? productsByName.get(matchByName) : undefined);
+
+    const quantity = item.quantity;
+    const unitPriceFromProduct = productMatch?.unitPriceNetCzk ?? null;
+    const lineTotal = unitPriceFromProduct ? unitPriceFromProduct.mul(quantity) : null;
+
+    return {
+      orderItemId: item.id,
+      productId: productMatch?.id ?? null,
+      productName: productMatch?.name ?? item.name ?? item.sku ?? "Unknown product",
+      sku: item.sku,
+      unitPriceFromProductNetCzk: decimalToMoneyOrNull(unitPriceFromProduct),
+      quantity: item.quantity.toString(),
+      lineTotalNetCzk: decimalToMoneyOrNull(lineTotal)
+    };
+  });
+
+  res.json({
+    order: {
+      id: order.id,
+      orderId: order.orderId,
+      status: order.status,
+      importedAt: order.importedAt,
+      customer: {
+        id: order.customer.id,
+        name: order.customer.name
+      },
+      currentSalesRep: order.customer.assignments[0]?.salesRep ?? null
+    },
+    products
   });
 });
 
@@ -673,6 +806,10 @@ workspaceRouter.get("/top-products", async (req, res) => {
       name: product.name,
       sku: product.sku,
       categoryName: product.categoryName,
+      unitPriceNetCzk: decimalToMoneyOrNull(product.unitPriceNetCzk),
+      stockQuantity: product.stockQuantity,
+      historicalSalesQty: product.historicalSalesQty,
+      incomingFromSupplierQty: product.incomingFromSupplierQty,
       isActive: product.isActive,
       turnoverNetCzk: product.sku ? turnoverMap.get(product.sku) ?? "0.00" : "0.00"
     })),

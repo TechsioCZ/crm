@@ -91,6 +91,10 @@ model GlobalTopProduct {
   sku          String?  @unique
   name         String   @unique
   categoryName String?
+  unitPriceNetCzk Decimal? @db.Decimal(14, 2)
+  stockQuantity Int?
+  historicalSalesQty Int?
+  incomingFromSupplierQty Int?
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

@@ -38,6 +38,10 @@ type ProductRow = {
   sku: string | null;
   name: string;
   categoryName: string | null;
+  unitPriceNetCzk: string | null;
+  stockQuantity: number | null;
+  historicalSalesQty: number | null;
+  incomingFromSupplierQty: number | null;
   isActive: boolean;
   turnoverNetCzk: string;
   orderItemLines: number;
@@ -64,6 +68,29 @@ type OrderRow = {
   };
 };
 
+type OrderDetailResponse = {
+  order: {
+    id: number;
+    orderId: string;
+    status: string;
+    importedAt: string;
+    customer: {
+      id: number;
+      name: string;
+    };
+    currentSalesRep: SalesRepOption | null;
+  };
+  products: Array<{
+    orderItemId: number;
+    productId: number | null;
+    productName: string;
+    sku: string | null;
+    unitPriceFromProductNetCzk: string | null;
+    quantity: string;
+    lineTotalNetCzk: string | null;
+  }>;
+};
+
 type CategoryRow = {
   id: number;
   name: string;
@@ -77,6 +104,10 @@ type TopProductRow = {
   name: string;
   sku: string | null;
   categoryName: string | null;
+  unitPriceNetCzk: string | null;
+  stockQuantity: number | null;
+  historicalSalesQty: number | null;
+  incomingFromSupplierQty: number | null;
   isActive: boolean;
   turnoverNetCzk: string;
 };
@@ -124,6 +155,9 @@ type DashboardResponse = {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 
 function App() {
+  const formatMoneyOrDash = (value: string | null) => (value === null ? "-" : `${value} CZK`);
+  const formatNumberOrDash = (value: number | null) => (value === null ? "-" : value.toString());
+
   const [email, setEmail] = useState("admin@crm.local");
   const [password, setPassword] = useState("Admin123!");
   const [token, setToken] = useState<string | null>(null);
@@ -160,6 +194,9 @@ function App() {
   const [orderDateToFilter, setOrderDateToFilter] = useState("");
   const [orderMessage, setOrderMessage] = useState("Order list not loaded yet.");
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Record<number, boolean>>({});
+  const [orderDetailsById, setOrderDetailsById] = useState<Record<number, OrderDetailResponse>>({});
+  const [orderDetailLoadingById, setOrderDetailLoadingById] = useState<Record<number, boolean>>({});
 
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -346,12 +383,56 @@ function App() {
 
       const body = (await response.json()) as { orders: OrderRow[]; summary: { count: number } };
       setOrders(body.orders);
+      setExpandedOrderIds({});
+      setOrderDetailsById({});
+      setOrderDetailLoadingById({});
       setOrderMessage(`Loaded ${body.summary.count} orders.`);
     } catch {
       setOrders([]);
       setOrderMessage("Order list request failed.");
     } finally {
       setOrdersLoading(false);
+    }
+  };
+
+  const loadOrderDetail = async (accessToken: string, orderDbId: number) => {
+    setOrderDetailLoadingById((prev) => ({ ...prev, [orderDbId]: true }));
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/workspace/orders/${orderDbId}`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      if (!response.ok) {
+        setOrderMessage(`Order detail failed (${response.status}) for order DB id ${orderDbId}.`);
+        return;
+      }
+
+      const body = (await response.json()) as OrderDetailResponse;
+      setOrderDetailsById((prev) => ({
+        ...prev,
+        [orderDbId]: body
+      }));
+    } catch {
+      setOrderMessage(`Order detail request failed for order DB id ${orderDbId}.`);
+    } finally {
+      setOrderDetailLoadingById((prev) => ({ ...prev, [orderDbId]: false }));
+    }
+  };
+
+  const handleToggleOrderExpand = async (orderDbId: number) => {
+    if (!token) {
+      return;
+    }
+
+    const isExpanded = expandedOrderIds[orderDbId] ?? false;
+    if (isExpanded) {
+      setExpandedOrderIds((prev) => ({ ...prev, [orderDbId]: false }));
+      return;
+    }
+
+    setExpandedOrderIds((prev) => ({ ...prev, [orderDbId]: true }));
+    if (!orderDetailsById[orderDbId]) {
+      await loadOrderDetail(token, orderDbId);
     }
   };
 
@@ -591,6 +672,9 @@ function App() {
     setContacts([]);
     setProducts([]);
     setOrders([]);
+    setExpandedOrderIds({});
+    setOrderDetailsById({});
+    setOrderDetailLoadingById({});
     setCategories([]);
     setTopProducts([]);
     setDashboard(null);
@@ -787,6 +871,14 @@ function App() {
                       <p>
                         Sales: <strong>{product.turnoverNetCzk} CZK</strong> | Lines: <strong>{product.orderItemLines}</strong>
                       </p>
+                      <p>
+                        Unit price: <strong>{formatMoneyOrDash(product.unitPriceNetCzk)}</strong>
+                      </p>
+                      <p>
+                        Stock: <strong>{formatNumberOrDash(product.stockQuantity)}</strong> | Historical sales:{" "}
+                        <strong>{formatNumberOrDash(product.historicalSalesQty)}</strong> | Incoming:{" "}
+                        <strong>{formatNumberOrDash(product.incomingFromSupplierQty)}</strong>
+                      </p>
                     </article>
                   ))}
                 </div>
@@ -840,19 +932,54 @@ function App() {
               <article className="panel">
                 <h2>Order list ({orders.length})</h2>
                 <div className="customer-list">
-                  {orders.map((order) => (
-                    <article className="customer-card" key={order.id}>
-                      <h3>
-                        {order.orderId} | {order.status}
-                      </h3>
-                      <p>
-                        Customer: <strong>{order.customer.name}</strong> | Rep: <strong>{order.currentSalesRep?.name ?? "-"}</strong>
-                      </p>
-                      <p>
-                        Product: <strong>{order.totals.productNetCzk}</strong> | Total: <strong>{order.totals.allNetCzk}</strong> CZK
-                      </p>
-                    </article>
-                  ))}
+                  {orders.map((order) => {
+                    const isExpanded = expandedOrderIds[order.id] ?? false;
+                    const detail = orderDetailsById[order.id];
+                    const detailLoading = orderDetailLoadingById[order.id] ?? false;
+
+                    return (
+                      <article className="customer-card" key={order.id}>
+                        <h3>
+                          {order.orderId} | {order.status}
+                        </h3>
+                        <p>
+                          Customer: <strong>{order.customer.name}</strong> | Rep: <strong>{order.currentSalesRep?.name ?? "-"}</strong>
+                        </p>
+                        <p>
+                          Product: <strong>{order.totals.productNetCzk}</strong> | Total: <strong>{order.totals.allNetCzk}</strong> CZK
+                        </p>
+                        <button type="button" onClick={() => handleToggleOrderExpand(order.id)}>
+                          {isExpanded ? "Hide products" : "Show products"}
+                        </button>
+
+                        {isExpanded && (
+                          <section className="order-detail">
+                            {detailLoading && <p>Loading product lines...</p>}
+                            {!detailLoading && !detail && <p>Order detail not loaded.</p>}
+                            {!detailLoading && detail && detail.products.length === 0 && <p>No product lines in this order.</p>}
+                            {!detailLoading && detail && detail.products.length > 0 && (
+                              <div className="customer-list">
+                                {detail.products.map((line) => (
+                                  <article className="customer-card order-line" key={line.orderItemId}>
+                                    <h4>
+                                      {line.productName} {line.sku ? `(${line.sku})` : ""}
+                                    </h4>
+                                    <p>
+                                      Unit price: <strong>{formatMoneyOrDash(line.unitPriceFromProductNetCzk)}</strong> | Quantity:{" "}
+                                      <strong>{line.quantity}</strong>
+                                    </p>
+                                    <p>
+                                      Line total: <strong>{formatMoneyOrDash(line.lineTotalNetCzk)}</strong>
+                                    </p>
+                                  </article>
+                                ))}
+                              </div>
+                            )}
+                          </section>
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
               </article>
             </div>
@@ -972,6 +1099,14 @@ function App() {
                       </p>
                       <p>
                         Sales: <strong>{item.turnoverNetCzk} CZK</strong>
+                      </p>
+                      <p>
+                        Unit price: <strong>{formatMoneyOrDash(item.unitPriceNetCzk)}</strong>
+                      </p>
+                      <p>
+                        Stock: <strong>{formatNumberOrDash(item.stockQuantity)}</strong> | Historical sales:{" "}
+                        <strong>{formatNumberOrDash(item.historicalSalesQty)}</strong> | Incoming:{" "}
+                        <strong>{formatNumberOrDash(item.incomingFromSupplierQty)}</strong>
                       </p>
                       {isAdmin && (
                         <button type="button" onClick={() => handleToggleTopProduct(item.id, item.isActive)}>
