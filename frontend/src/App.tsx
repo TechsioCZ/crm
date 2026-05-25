@@ -380,7 +380,7 @@ function App() {
 
   const [visibleCustomers, setVisibleCustomers] = useState<CustomerListItem[]>([]);
   const [selectedVisibleCustomerId, setSelectedVisibleCustomerId] = useState<number | null>(null);
-  const [manualCustomerId, setManualCustomerId] = useState("2");
+  const [manualCustomerName, setManualCustomerName] = useState("Klient 001");
   const [customerDetail, setCustomerDetail] = useState<Customer | null>(null);
   const [customerMessage, setCustomerMessage] = useState("Customer panel not loaded yet.");
 
@@ -437,6 +437,25 @@ function App() {
   const isLoggedIn = useMemo(() => Boolean(token), [token]);
   const isAdmin = user?.role === "admin";
 
+  const resolveManualCustomerIdByName = (): number | null => {
+    const manualName = manualCustomerName.trim().toLowerCase();
+    if (!manualName) {
+      return null;
+    }
+
+    const exactMatch = visibleCustomers.find((customer) => customer.name.trim().toLowerCase() === manualName);
+    if (exactMatch) {
+      return exactMatch.id;
+    }
+
+    const partialMatch = visibleCustomers.find((customer) => customer.name.trim().toLowerCase().includes(manualName));
+    if (partialMatch) {
+      return partialMatch.id;
+    }
+
+    return null;
+  };
+
   useEffect(() => {
     const checkBackend = async () => {
       try {
@@ -488,6 +507,7 @@ function App() {
       if (body.customers.length > 0) {
         const id = body.customers[0].id;
         setSelectedVisibleCustomerId(id);
+        setManualCustomerName(body.customers[0].name);
         await loadCustomerDetail(accessToken, id);
         setCustomerMessage(`Loaded ${body.customers.length} visible customers.`);
         return id;
@@ -1113,9 +1133,9 @@ function App() {
       return;
     }
 
-    const id = Number(manualCustomerId);
-    if (!Number.isInteger(id) || id <= 0) {
-      setCustomerMessage("Customer id must be a positive integer.");
+    const id = resolveManualCustomerIdByName();
+    if (!id) {
+      setCustomerMessage("Customer name not found in your visible customer list.");
       return;
     }
 
@@ -1140,9 +1160,9 @@ function App() {
       return;
     }
 
-    const id = Number(manualCustomerId);
-    if (!Number.isInteger(id) || id <= 0) {
-      setAnalyticsMessage("Customer id must be a positive integer.");
+    const id = resolveManualCustomerIdByName();
+    if (!id) {
+      setAnalyticsMessage("Customer name not found in your visible customer list.");
       return;
     }
 
@@ -1358,9 +1378,9 @@ function App() {
       return;
     }
 
-    const id = Number(manualCustomerId);
-    if (!Number.isInteger(id) || id <= 0) {
-      setRecommendationMessage("Customer id must be a positive integer.");
+    const id = resolveManualCustomerIdByName();
+    if (!id) {
+      setRecommendationMessage("Customer name not found in your visible customer list.");
       return;
     }
 
@@ -1383,9 +1403,9 @@ function App() {
       return;
     }
 
-    const id = Number(manualCustomerId);
-    if (!Number.isInteger(id) || id <= 0) {
-      setCrmMessage("Customer id must be a positive integer.");
+    const id = resolveManualCustomerIdByName();
+    if (!id) {
+      setCrmMessage("Customer name not found in your visible customer list.");
       return;
     }
 
@@ -1407,9 +1427,9 @@ function App() {
       return;
     }
 
-    const id = Number(manualCustomerId);
-    if (!Number.isInteger(id) || id <= 0) {
-      setCrmMessage("Customer id must be a positive integer.");
+    const id = resolveManualCustomerIdByName();
+    if (!id) {
+      setCrmMessage("Customer name not found in your visible customer list.");
       return;
     }
 
@@ -1564,8 +1584,12 @@ function App() {
         </div>
 
         <label className="search-box">
-          Search
-          <input value={manualCustomerId} onChange={(e) => setManualCustomerId(e.target.value)} placeholder="Customer ID" />
+          Customer Name
+          <input
+            value={manualCustomerName}
+            onChange={(e) => setManualCustomerName(e.target.value)}
+            placeholder="Type customer name"
+          />
         </label>
 
         <nav className="side-nav" aria-label="workspace sections">
@@ -1645,9 +1669,13 @@ function App() {
                   </button>
                 </div>
                 <div className="assign-row">
-                  <input value={manualCustomerId} onChange={(e) => setManualCustomerId(e.target.value)} />
+                  <input
+                    value={manualCustomerName}
+                    onChange={(e) => setManualCustomerName(e.target.value)}
+                    placeholder="Customer name"
+                  />
                   <button type="button" onClick={handleLoadManualDetail}>
-                    Load by ID
+                    Load by name
                   </button>
                 </div>
               </article>
@@ -1780,7 +1808,7 @@ function App() {
                     Trend for selected customer
                   </button>
                   <button type="button" onClick={handleLoadManualTrend} disabled={isCrmLoading}>
-                    Trend by manual ID
+                    Trend by customer name
                   </button>
                 </div>
                 {trendResult && (
