@@ -8,6 +8,7 @@ import { adminRouter } from "./routes/admin";
 import { customersRouter } from "./routes/customers";
 import { recommendationsRouter } from "./routes/recommendations";
 import { crmRouter } from "./routes/crm";
+import { workspaceRouter } from "./routes/workspace";
 
 const app = express();
 const allowedOrigins = env.CORS_ORIGIN.split(",").map((origin) => origin.trim());
@@ -37,6 +38,7 @@ app.use("/api/admin", adminRouter);
 app.use("/api/customers", customersRouter);
 app.use("/api/recommendations", recommendationsRouter);
 app.use("/api/crm", crmRouter);
+app.use("/api/workspace", workspaceRouter);
 
 app.get("/", (_req, res) => {
   res.json({
@@ -58,7 +60,14 @@ app.get("/", (_req, res) => {
       crmNotes: "GET/POST /api/crm/customers/:customerId/notes",
       crmCustomerTasks: "GET/POST /api/crm/customers/:customerId/tasks",
       crmMyTasks: "GET /api/crm/tasks/mine",
-      crmTurnoverTrend: "GET /api/crm/customers/:customerId/turnover-trend?from=YYYY-MM-DD&to=YYYY-MM-DD"
+      crmTurnoverTrend: "GET /api/crm/customers/:customerId/turnover-trend?from=YYYY-MM-DD&to=YYYY-MM-DD",
+      workspaceMeta: "GET /api/workspace/meta",
+      workspaceContacts: "GET /api/workspace/contacts",
+      workspaceProducts: "GET /api/workspace/products",
+      workspaceOrders: "GET /api/workspace/orders",
+      workspaceCategories: "GET/POST/PATCH /api/workspace/categories",
+      workspaceTopProducts: "GET/POST/PATCH /api/workspace/top-products",
+      workspaceDashboard: "GET /api/workspace/dashboard"
     }
   });
 });
