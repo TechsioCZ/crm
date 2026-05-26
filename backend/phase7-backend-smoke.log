@@ -1,0 +1,7 @@
+
+> crm-mvp-backend@0.1.0 dev
+> tsx watch src/server.ts
+
+Backend listening on http://localhost:4000
+15:03:04 [tsx] change in ./src\server.ts Restarting...
+cBackend listening on http://localhost:4000

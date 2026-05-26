@@ -276,7 +276,7 @@ function App() {
   const [productNameFilter, setProductNameFilter] = useState("");
   const [productSkuFilter, setProductSkuFilter] = useState("");
   const [productCategoryFilter, setProductCategoryFilter] = useState("");
-  const [productActiveFilter, setProductActiveFilter] = useState<"any" | "true" | "false">("any");
+  const [productActiveFilter, setProductActiveFilter] = useState<"any" | "true" | "false">("true");
   const [productMessage, setProductMessage] = useState("Product list not loaded yet.");
   const [productsLoading, setProductsLoading] = useState(false);
 
@@ -303,7 +303,7 @@ function App() {
   const [topProducts, setTopProducts] = useState<TopProductRow[]>([]);
   const [topProductFilterQ, setTopProductFilterQ] = useState("");
   const [topProductFilterCategory, setTopProductFilterCategory] = useState("");
-  const [topProductFilterActive, setTopProductFilterActive] = useState<"any" | "true" | "false">("any");
+  const [topProductFilterActive, setTopProductFilterActive] = useState<"any" | "true" | "false">("true");
   const [newTopProductName, setNewTopProductName] = useState("");
   const [newTopProductSku, setNewTopProductSku] = useState("");
   const [newTopProductCategory, setNewTopProductCategory] = useState("");
@@ -876,7 +876,7 @@ function App() {
       return;
     }
 
-    const loadingHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Category ${escapeHtml(categoryName)}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Loading category ${escapeHtml(categoryName)}...</h2></body></html>`;
+    const loadingHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(categoryName)}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Loading ${escapeHtml(categoryName)}...</h2></body></html>`;
     categoryWindow.document.open();
     categoryWindow.document.write(loadingHtml);
     categoryWindow.document.close();
@@ -884,6 +884,7 @@ function App() {
     try {
       const query = new URLSearchParams();
       query.set("category", categoryName);
+      query.set("isActive", "true");
       query.set("limit", "500");
 
       const response = await fetch(`${API_BASE_URL}/api/workspace/products?${query.toString()}`, {
@@ -902,7 +903,15 @@ function App() {
       const body = (await response.json()) as { products: ProductRow[]; summary: { count: number } };
       const rowsHtml = body.products
         .map((product) => {
-          return `<tr><td>${escapeHtml(product.name)}</td><td>${escapeHtml(product.sku ?? "-")}</td><td>${escapeHtml(product.categoryName ?? "-")}</td><td>${escapeHtml(product.turnoverNetCzk)}</td><td>${escapeHtml(formatMoneyOrDash(product.unitPriceNetCzk))}</td><td>${escapeHtml(String(product.isActive))}</td></tr>`;
+          const name = escapeHtml(product.name);
+          const sku = escapeHtml(product.sku ?? "-");
+          const sales = escapeHtml(product.turnoverNetCzk);
+          const unitPrice = escapeHtml(formatMoneyOrDash(product.unitPriceNetCzk));
+          const topList = escapeHtml(String(product.isActive));
+          const stock = escapeHtml(formatNumberOrDash(product.stockQuantity));
+          const historicalSales = escapeHtml(formatNumberOrDash(product.historicalSalesQty));
+          const incoming = escapeHtml(formatNumberOrDash(product.incomingFromSupplierQty));
+          return `<tr><td><a href="#" data-product-name="${name}" data-product-sku="${sku}" data-product-sales="${sales}" data-product-unit-price="${unitPrice}" data-product-stock="${stock}" data-product-historical-sales="${historicalSales}" data-product-incoming="${incoming}" data-product-top-list="${topList}">${name}</a></td><td>${sku}</td><td>${sales}</td><td>${unitPrice}</td><td>${topList}</td></tr>`;
         })
         .join("");
 
@@ -924,24 +933,87 @@ function App() {
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>Category: ${escapeHtml(categoryName)} (${body.summary.count} products)</h1>
+      <h1>${escapeHtml(categoryName)} (${body.summary.count} products)</h1>
       <table>
         <thead>
           <tr>
             <th>Name</th>
             <th>SKU</th>
-            <th>Category</th>
             <th>Sales CZK</th>
             <th>Unit price</th>
             <th>In TOP list</th>
           </tr>
         </thead>
         <tbody>
-          ${rowsHtml || '<tr><td colspan="6">No products in this category.</td></tr>'}
+          ${rowsHtml || '<tr><td colspan="5">No products in this category.</td></tr>'}
         </tbody>
       </table>
     </div>
   </div>
+  <script>
+    (() => {
+      const escapeHtml = (value) => value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+
+      const openProductPopup = (name, sku, sales, unitPrice, stock, historicalSales, incoming, topList) => {
+        const popup = window.open("", "_blank", "width=740,height=520");
+        if (!popup) {
+          alert("Popup blocked. Please allow popups for this app.");
+          return;
+        }
+
+        popup.document.open();
+        popup.document.write(\`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Product \${escapeHtml(name)}</title>
+  <style>
+    body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#eef2f7;color:#1d2a3a}
+    .wrap{max-width:760px;margin:0 auto;padding:24px}
+    .card{background:#fff;border:1px solid #d6dbe7;border-radius:12px;padding:16px}
+    h1{margin:0 0 12px;font-size:28px}
+    p{margin:8px 0}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>\${escapeHtml(name)}</h1>
+      <p>SKU: <strong>\${escapeHtml(sku)}</strong></p>
+      <p>Sales CZK: <strong>\${escapeHtml(sales)}</strong></p>
+      <p>Unit price: <strong>\${escapeHtml(unitPrice)}</strong></p>
+      <p>Stock: <strong>\${escapeHtml(stock)}</strong> | Historical sales: <strong>\${escapeHtml(historicalSales)}</strong> | Incoming: <strong>\${escapeHtml(incoming)}</strong></p>
+      \${topList === "true" ? "<p>In TOP list: <strong>true</strong></p>" : ""}
+    </div>
+  </div>
+</body>
+</html>\`);
+        popup.document.close();
+      };
+
+      document.querySelectorAll("[data-product-name]").forEach((anchor) => {
+        anchor.style.cursor = "pointer";
+        anchor.style.textDecoration = "underline";
+        anchor.addEventListener("click", (event) => {
+          event.preventDefault();
+          const name = anchor.getAttribute("data-product-name") || "";
+          const sku = anchor.getAttribute("data-product-sku") || "-";
+          const sales = anchor.getAttribute("data-product-sales") || "0.00";
+          const unitPrice = anchor.getAttribute("data-product-unit-price") || "-";
+          const stock = anchor.getAttribute("data-product-stock") || "-";
+          const historicalSales = anchor.getAttribute("data-product-historical-sales") || "-";
+          const incoming = anchor.getAttribute("data-product-incoming") || "-";
+          const topList = anchor.getAttribute("data-product-top-list") || "false";
+          openProductPopup(name, sku, sales, unitPrice, stock, historicalSales, incoming, topList);
+        });
+      });
+    })();
+  </script>
 </body>
 </html>`;
 
@@ -1063,19 +1135,21 @@ function App() {
     }
   }, []);
 
-  const buildOrderWindowHtml = useCallback((detail: OrderDetailResponse): string => {
-    const rowsHtml = detail.products
-      .map((line) => {
-        const productName = escapeHtml(line.productName);
-        const sku = line.sku ? ` (${escapeHtml(line.sku)})` : "";
-        const unitPrice = line.unitPriceFromProductNetCzk ? `${escapeHtml(line.unitPriceFromProductNetCzk)} CZK` : "-";
-        const qty = escapeHtml(line.quantity);
-        const lineTotal = line.lineTotalNetCzk ? `${escapeHtml(line.lineTotalNetCzk)} CZK` : "-";
-        return `<tr><td>${productName}${sku}</td><td>${unitPrice}</td><td>${qty}</td><td>${lineTotal}</td></tr>`;
-      })
-      .join("");
+  const buildOrderWindowHtml = useCallback(
+    (detail: OrderDetailResponse): string => {
+      const rowsHtml = detail.products
+        .map((line) => {
+          const productName = escapeHtml(line.productName);
+          const skuValue = escapeHtml(line.sku ?? "-");
+          const skuLabel = line.sku ? ` (${escapeHtml(line.sku)})` : "";
+          const unitPrice = line.unitPriceFromProductNetCzk ? `${escapeHtml(line.unitPriceFromProductNetCzk)} CZK` : "-";
+          const qty = escapeHtml(line.quantity);
+          const lineTotal = line.lineTotalNetCzk ? `${escapeHtml(line.lineTotalNetCzk)} CZK` : "-";
+          return `<tr><td><a href="#" data-product-name="${productName}" data-product-sku="${skuValue}" data-product-unit-price="${unitPrice}">${productName}${skuLabel}</a></td><td>${unitPrice}</td><td>${qty}</td><td>${lineTotal}</td></tr>`;
+        })
+        .join("");
 
-    return `<!doctype html>
+      return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -1118,9 +1192,151 @@ function App() {
       </table>
     </div>
   </div>
+  <script>
+    (() => {
+      const apiBaseUrl = ${JSON.stringify(API_BASE_URL)};
+      const authToken = ${JSON.stringify(token ?? "")};
+
+      const escapeHtml = (value) => value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+
+      const openProductPopup = (name, sku, sales, unitPrice, stock, historicalSales, incoming, topList) => {
+        const popup = window.open("", "_blank", "width=740,height=520");
+        if (!popup) {
+          alert("Popup blocked. Please allow popups for this app.");
+          return;
+        }
+
+        popup.document.open();
+        popup.document.write(\`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Product \${escapeHtml(name)}</title>
+  <style>
+    body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#eef2f7;color:#1d2a3a}
+    .wrap{max-width:760px;margin:0 auto;padding:24px}
+    .card{background:#fff;border:1px solid #d6dbe7;border-radius:12px;padding:16px}
+    h1{margin:0 0 12px;font-size:28px}
+    p{margin:8px 0}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>\${escapeHtml(name)}</h1>
+      <p>SKU: <strong>\${escapeHtml(sku)}</strong></p>
+      <p>Sales CZK: <strong>\${escapeHtml(sales)}</strong></p>
+      <p>Unit price: <strong>\${escapeHtml(unitPrice)}</strong></p>
+      <p>Stock: <strong>\${escapeHtml(stock)}</strong> | Historical sales: <strong>\${escapeHtml(historicalSales)}</strong> | Incoming: <strong>\${escapeHtml(incoming)}</strong></p>
+      \${topList === "true" ? "<p>In TOP list: <strong>true</strong></p>" : ""}
+    </div>
+  </div>
+</body>
+</html>\`);
+        popup.document.close();
+      };
+
+      const formatNumberOrDash = (value) => (value === null || value === undefined ? "-" : String(value));
+
+      const loadProductInfo = async (name, sku, fallbackUnitPrice) => {
+        if (!authToken) {
+          return {
+            sales: "-",
+            unitPrice: fallbackUnitPrice,
+            stock: "-",
+            historicalSales: "-",
+            incoming: "-",
+            topList: "false"
+          };
+        }
+
+        try {
+          const query = new URLSearchParams();
+          if (sku && sku !== "-") {
+            query.set("sku", sku);
+          } else if (name) {
+            query.set("name", name);
+          }
+          query.set("isActive", "any");
+          query.set("limit", "20");
+
+          const response = await fetch(apiBaseUrl + "/api/workspace/products?" + query.toString(), {
+            headers: {
+              Authorization: "Bearer " + authToken
+            }
+          });
+
+          if (!response.ok) {
+            throw new Error("Product detail failed.");
+          }
+
+          const body = await response.json();
+          const productList = Array.isArray(body.products) ? body.products : [];
+          const skuToken = String(sku || "").trim().toLowerCase();
+          const nameToken = String(name || "").trim().toLowerCase();
+
+          const matchBySku = skuToken
+            ? productList.find((item) => String(item.sku || "").trim().toLowerCase() === skuToken)
+            : null;
+          const matchByName = nameToken
+            ? productList.find((item) => String(item.name || "").trim().toLowerCase() === nameToken)
+            : null;
+          const product = matchBySku || matchByName || productList[0] || null;
+
+          return {
+            sales: product ? String(product.turnoverNetCzk || "-") : "-",
+            unitPrice: product && product.unitPriceNetCzk ? String(product.unitPriceNetCzk) + " CZK" : fallbackUnitPrice,
+            stock: formatNumberOrDash(product ? product.stockQuantity : null),
+            historicalSales: formatNumberOrDash(product ? product.historicalSalesQty : null),
+            incoming: formatNumberOrDash(product ? product.incomingFromSupplierQty : null),
+            topList: product && product.isActive === true ? "true" : "false"
+          };
+        } catch {
+          return {
+            sales: "-",
+            unitPrice: fallbackUnitPrice,
+            stock: "-",
+            historicalSales: "-",
+            incoming: "-",
+            topList: "false"
+          };
+        }
+      };
+
+      document.querySelectorAll("[data-product-name]").forEach((anchor) => {
+        anchor.style.cursor = "pointer";
+        anchor.style.textDecoration = "underline";
+        anchor.addEventListener("click", (event) => {
+          event.preventDefault();
+          const name = anchor.getAttribute("data-product-name") || "";
+          const sku = anchor.getAttribute("data-product-sku") || "-";
+          const fallbackUnitPrice = anchor.getAttribute("data-product-unit-price") || "-";
+          void loadProductInfo(name, sku, fallbackUnitPrice).then((productInfo) => {
+            openProductPopup(
+              name,
+              sku,
+              productInfo.sales,
+              productInfo.unitPrice,
+              productInfo.stock,
+              productInfo.historicalSales,
+              productInfo.incoming,
+              productInfo.topList
+            );
+          });
+        });
+      });
+    })();
+  </script>
 </body>
 </html>`;
-  }, [escapeHtml]);
+    },
+    [escapeHtml, token]
+  );
 
   const handleOpenOrderWindowById = useCallback(async (orderDbId: number, orderLabel?: string) => {
     if (!token) {
@@ -1360,7 +1576,9 @@ function App() {
       const actionMessage = isActive ? "Product removed from TOP list." : "Product added to TOP list.";
       setTopProductsMessage(actionMessage);
       setProductMessage(actionMessage);
-      await Promise.all([loadTopProducts(token), loadProducts(token), loadCategories(token)]);
+      setTopProducts((prev) => prev.map((item) => (item.id === topProductId ? { ...item, isActive: !isActive } : item)));
+      setProducts((prev) => prev.map((item) => (item.id === topProductId ? { ...item, isActive: !isActive } : item)));
+      void loadCategories(token);
     } catch {
       setTopProductsMessage("Update top product request failed.");
       setProductMessage("Update top product request failed.");
@@ -1767,10 +1985,10 @@ function App() {
                         {product.name} {product.sku ? `(${product.sku})` : ""}
                       </h3>
                       <p>
-                        Category: <strong>{product.categoryName ?? "-"}</strong> | Active: <strong>{String(product.isActive)}</strong>
+                        Category: <strong>{product.categoryName ?? "-"}</strong>
                       </p>
                       <p>
-                        Sales: <strong>{product.turnoverNetCzk} CZK</strong> | Lines: <strong>{product.orderItemLines}</strong>
+                        Sales: <strong>{product.turnoverNetCzk} CZK</strong>
                       </p>
                       <p>
                         Unit price: <strong>{formatMoneyOrDash(product.unitPriceNetCzk)}</strong>
@@ -1780,9 +1998,6 @@ function App() {
                         <strong>{formatNumberOrDash(product.historicalSalesQty)}</strong> | Incoming:{" "}
                         <strong>{formatNumberOrDash(product.incomingFromSupplierQty)}</strong>
                       </p>
-                      <button type="button" onClick={() => handleToggleTopProduct(product.id, product.isActive)}>
-                        {product.isActive ? "Remove from TOP list" : "Add to TOP list"}
-                      </button>
                     </article>
                   ))}
                 </div>
@@ -1865,9 +2080,6 @@ function App() {
                         <p>
                           Product: <strong>{order.totals.productNetCzk}</strong> | Total: <strong>{order.totals.allNetCzk}</strong> CZK
                         </p>
-                        <button type="button" onClick={() => handleOpenOrderWindow(order)} disabled={detailLoading}>
-                          {detailLoading ? "Opening..." : "Open in new window"}
-                        </button>
                       </article>
                     );
                   })}
@@ -2002,6 +2214,9 @@ function App() {
                         <strong>{formatNumberOrDash(item.historicalSalesQty)}</strong> | Incoming:{" "}
                         <strong>{formatNumberOrDash(item.incomingFromSupplierQty)}</strong>
                       </p>
+                      <button type="button" onClick={() => handleToggleTopProduct(item.id, item.isActive)}>
+                        {item.isActive ? "Remove from TOP list" : "Add to TOP list"}
+                      </button>
                     </article>
                   ))}
                 </div>
