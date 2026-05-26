@@ -227,6 +227,114 @@ type DashboardResponse = {
   }>;
 };
 
+type ImportKind = "customers" | "products" | "orders";
+
+type ImportResponse = {
+  message: string;
+  run?: {
+    id: number;
+    totalRecords: number;
+    createdOrders: number;
+    updatedOrders: number;
+    errorRecords: number;
+    startedAt: string;
+    finishedAt: string | null;
+  };
+  errors?: Array<{
+    recordIndex: number;
+    message: string;
+  }>;
+};
+
+const IMPORT_TEMPLATES: Record<ImportKind, { filename: string; xml: string }> = {
+  customers: {
+    filename: "customers-import-template.xml",
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<customers>
+  <customer>
+    <customer_id>1001</customer_id>
+    <name>ACME s.r.o.</name>
+  </customer>
+  <customer>
+    <customer_id>1002</customer_id>
+    <name>Blue River a.s.</name>
+  </customer>
+</customers>
+`
+  },
+  products: {
+    filename: "products-import-template.xml",
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<products>
+  <product>
+    <sku>SKU-1001</sku>
+    <name>Hydraulic Pump A1</name>
+    <category_name>Pumps</category_name>
+    <unit_price_net_czk>1299.90</unit_price_net_czk>
+    <stock_quantity>12</stock_quantity>
+    <historical_sales_qty>340</historical_sales_qty>
+    <incoming_from_supplier_qty>20</incoming_from_supplier_qty>
+    <is_active>true</is_active>
+  </product>
+  <product>
+    <sku>SKU-1002</sku>
+    <name>Seal Kit B2</name>
+    <category_name>Accessories</category_name>
+    <unit_price_net_czk>89.50</unit_price_net_czk>
+    <stock_quantity>150</stock_quantity>
+    <historical_sales_qty>1200</historical_sales_qty>
+    <incoming_from_supplier_qty>80</incoming_from_supplier_qty>
+    <is_active>true</is_active>
+  </product>
+</products>
+`
+  },
+  orders: {
+    filename: "orders-import-template.xml",
+    xml: `<?xml version="1.0" encoding="UTF-8"?>
+<orders>
+  <order_line>
+    <order_id>ORD-2026-0001</order_id>
+    <customer_id>1001</customer_id>
+    <status>confirmed</status>
+    <imported_at>2026-05-26T10:30:00Z</imported_at>
+    <line_type>product</line_type>
+    <sku>SKU-1001</sku>
+    <name>Hydraulic Pump A1</name>
+    <category_name>Pumps</category_name>
+    <quantity>2</quantity>
+    <unit_price_net_czk>1299.90</unit_price_net_czk>
+    <line_net_czk>2599.80</line_net_czk>
+  </order_line>
+  <order_line>
+    <order_id>ORD-2026-0001</order_id>
+    <customer_id>1001</customer_id>
+    <status>confirmed</status>
+    <imported_at>2026-05-26T10:30:00Z</imported_at>
+    <line_type>shipping</line_type>
+    <name>Shipping</name>
+    <quantity>1</quantity>
+    <unit_price_net_czk>120.00</unit_price_net_czk>
+    <line_net_czk>120.00</line_net_czk>
+  </order_line>
+  <order_line>
+    <order_id>ORD-2026-0002</order_id>
+    <customer_id>1002</customer_id>
+    <status>new</status>
+    <imported_at>2026-05-27T09:00:00Z</imported_at>
+    <line_type>product</line_type>
+    <sku>SKU-1002</sku>
+    <name>Seal Kit B2</name>
+    <category_name>Accessories</category_name>
+    <quantity>10</quantity>
+    <unit_price_net_czk>89.50</unit_price_net_czk>
+    <line_net_czk>895.00</line_net_czk>
+  </order_line>
+</orders>
+`
+  }
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
 
 function App() {
@@ -310,6 +418,13 @@ function App() {
   const [newTopProductActive, setNewTopProductActive] = useState(true);
   const [topProductsMessage, setTopProductsMessage] = useState("Top products not loaded yet.");
   const [topProductsLoading, setTopProductsLoading] = useState(false);
+
+  const [customerImportFile, setCustomerImportFile] = useState<File | null>(null);
+  const [productImportFile, setProductImportFile] = useState<File | null>(null);
+  const [orderImportFile, setOrderImportFile] = useState<File | null>(null);
+  const [customerImportLoading, setCustomerImportLoading] = useState(false);
+  const [productImportLoading, setProductImportLoading] = useState(false);
+  const [orderImportLoading, setOrderImportLoading] = useState(false);
 
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [dashboardMessage, setDashboardMessage] = useState("Dashboard not loaded yet.");
@@ -1475,6 +1590,123 @@ function App() {
     }
   };
 
+  const downloadImportTemplate = (kind: ImportKind) => {
+    const template = IMPORT_TEMPLATES[kind];
+    const blob = new Blob([template.xml], { type: "application/xml;charset=utf-8" });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = template.filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  const handleImportFromFile = async (kind: ImportKind, file: File | null) => {
+    if (!token) {
+      return;
+    }
+    if (!file) {
+      if (kind === "customers") {
+        setContactMessage("Please choose an XML file first.");
+      } else if (kind === "products") {
+        setProductMessage("Please choose an XML file first.");
+      } else {
+        setOrderMessage("Please choose an XML file first.");
+      }
+      return;
+    }
+
+    const setLoadingByKind = (isLoading: boolean) => {
+      if (kind === "customers") {
+        setCustomerImportLoading(isLoading);
+      } else if (kind === "products") {
+        setProductImportLoading(isLoading);
+      } else {
+        setOrderImportLoading(isLoading);
+      }
+    };
+
+    const setFileByKind = (nextFile: File | null) => {
+      if (kind === "customers") {
+        setCustomerImportFile(nextFile);
+      } else if (kind === "products") {
+        setProductImportFile(nextFile);
+      } else {
+        setOrderImportFile(nextFile);
+      }
+    };
+
+    const setMessageByKind = (message: string) => {
+      if (kind === "customers") {
+        setContactMessage(message);
+      } else if (kind === "products") {
+        setProductMessage(message);
+      } else {
+        setOrderMessage(message);
+      }
+    };
+
+    const endpointByKind: Record<ImportKind, string> = {
+      customers: "customers",
+      products: "products",
+      orders: "orders"
+    };
+
+    setLoadingByKind(true);
+    setMessageByKind(`Importing ${kind} from ${file.name}...`);
+
+    try {
+      const xml = await file.text();
+      if (!xml.trim()) {
+        setMessageByKind("Selected file is empty.");
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/admin/imports/${endpointByKind[kind]}/xml`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          xml,
+          sourceName: `manual-file-${kind}-${file.name}`
+        })
+      });
+
+      const body = (await response.json().catch(() => null)) as ImportResponse | null;
+      if (!response.ok) {
+        setMessageByKind(body?.message ?? `Import failed (${response.status}).`);
+        return;
+      }
+
+      const runSummary = body?.run
+        ? ` total=${body.run.totalRecords}, created=${body.run.createdOrders}, updated=${body.run.updatedOrders}, errors=${body.run.errorRecords}`
+        : "";
+      const sampleError = body?.errors && body.errors.length > 0 ? ` First error: row ${body.errors[0].recordIndex} - ${body.errors[0].message}` : "";
+      setMessageByKind(`${body?.message ?? "Import completed."}${runSummary}.${sampleError}`.trim());
+
+      if (kind === "customers") {
+        await loadContacts(token);
+      } else if (kind === "products") {
+        await loadProducts(token);
+        await loadTopProducts(token);
+        await loadCategories(token);
+      } else {
+        await loadOrders(token);
+        await loadMeta(token);
+      }
+
+      setFileByKind(null);
+    } catch {
+      setMessageByKind("Import request failed.");
+    } finally {
+      setLoadingByKind(false);
+    }
+  };
+
   const handleCreateCategory = async () => {
     if (!token) {
       return;
@@ -1710,6 +1942,12 @@ function App() {
     setTopProducts([]);
     setDashboard(null);
     setDashboardSalesRepFilterIds([]);
+    setCustomerImportFile(null);
+    setProductImportFile(null);
+    setOrderImportFile(null);
+    setCustomerImportLoading(false);
+    setProductImportLoading(false);
+    setOrderImportLoading(false);
   };
 
   if (!isLoggedIn) {
@@ -1917,6 +2155,35 @@ function App() {
                 <button type="button" onClick={() => token && loadContacts(token)} disabled={contactsLoading}>
                   {contactsLoading ? "Loading..." : "Apply filters"}
                 </button>
+                {isAdmin && (
+                  <div className="import-box">
+                    <h3>Customer import</h3>
+                    <div className="import-actions">
+                      <button type="button" onClick={() => downloadImportTemplate("customers")} disabled={customerImportLoading}>
+                        Download XML template
+                      </button>
+                      <label className="file-picker">
+                        <span>Choose XML file</span>
+                        <input
+                          type="file"
+                          accept=".xml,text/xml,application/xml"
+                          onChange={(event) => {
+                            setCustomerImportFile(event.target.files?.[0] ?? null);
+                          }}
+                          disabled={customerImportLoading}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleImportFromFile("customers", customerImportFile)}
+                        disabled={customerImportLoading}
+                      >
+                        {customerImportLoading ? "Importing..." : "Import customers"}
+                      </button>
+                    </div>
+                    <p className="hint">{customerImportFile ? `Selected file: ${customerImportFile.name}` : "No file selected yet."}</p>
+                  </div>
+                )}
                 <p className="message">{contactMessage}</p>
               </article>
 
@@ -1973,6 +2240,31 @@ function App() {
                 <button type="button" onClick={() => token && loadProducts(token)} disabled={productsLoading}>
                   {productsLoading ? "Loading..." : "Apply filters"}
                 </button>
+                {isAdmin && (
+                  <div className="import-box">
+                    <h3>Product import</h3>
+                    <div className="import-actions">
+                      <button type="button" onClick={() => downloadImportTemplate("products")} disabled={productImportLoading}>
+                        Download XML template
+                      </button>
+                      <label className="file-picker">
+                        <span>Choose XML file</span>
+                        <input
+                          type="file"
+                          accept=".xml,text/xml,application/xml"
+                          onChange={(event) => {
+                            setProductImportFile(event.target.files?.[0] ?? null);
+                          }}
+                          disabled={productImportLoading}
+                        />
+                      </label>
+                      <button type="button" onClick={() => handleImportFromFile("products", productImportFile)} disabled={productImportLoading}>
+                        {productImportLoading ? "Importing..." : "Import products"}
+                      </button>
+                    </div>
+                    <p className="hint">{productImportFile ? `Selected file: ${productImportFile.name}` : "No file selected yet."}</p>
+                  </div>
+                )}
                 <p className="message">{productMessage}</p>
               </article>
 
@@ -2052,6 +2344,31 @@ function App() {
                 <button type="button" onClick={() => token && loadOrders(token)} disabled={ordersLoading}>
                   {ordersLoading ? "Loading..." : "Apply filters"}
                 </button>
+                {isAdmin && (
+                  <div className="import-box">
+                    <h3>Order import</h3>
+                    <div className="import-actions">
+                      <button type="button" onClick={() => downloadImportTemplate("orders")} disabled={orderImportLoading}>
+                        Download XML template
+                      </button>
+                      <label className="file-picker">
+                        <span>Choose XML file</span>
+                        <input
+                          type="file"
+                          accept=".xml,text/xml,application/xml"
+                          onChange={(event) => {
+                            setOrderImportFile(event.target.files?.[0] ?? null);
+                          }}
+                          disabled={orderImportLoading}
+                        />
+                      </label>
+                      <button type="button" onClick={() => handleImportFromFile("orders", orderImportFile)} disabled={orderImportLoading}>
+                        {orderImportLoading ? "Importing..." : "Import orders"}
+                      </button>
+                    </div>
+                    <p className="hint">{orderImportFile ? `Selected file: ${orderImportFile.name}` : "No file selected yet."}</p>
+                  </div>
+                )}
                 <p className="message">{orderMessage}</p>
               </article>
 

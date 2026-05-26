@@ -289,6 +289,42 @@ button:disabled {
   margin: 0.7rem 0;
 }
 
+.import-box {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--line);
+  display: grid;
+  gap: 0.55rem;
+}
+
+.import-box h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.file-picker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.62rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid #bfc9db;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.file-picker input {
+  display: none;
+}
+
 .message {
   margin: 0.5rem 0;
   font-weight: 700;

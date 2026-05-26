@@ -50,6 +50,8 @@ app.get("/", (_req, res) => {
       login: "POST /api/auth/login",
       devUsers: "GET/POST/DELETE /api/auth/dev-users",
       adminCustomers: "GET /api/admin/customers",
+      adminCustomerXmlImport: "POST /api/admin/imports/customers/xml",
+      adminProductXmlImport: "POST /api/admin/imports/products/xml",
       adminXmlImport: "POST /api/admin/imports/orders/xml",
       adminImportHistory: "GET /api/admin/imports",
       roleCustomers: "GET /api/customers",

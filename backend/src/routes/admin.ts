@@ -116,6 +116,48 @@ function parseDecimal(value: string | undefined): Prisma.Decimal | null {
   }
 }
 
+function parsePositiveInteger(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parseOptionalInteger(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed)) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parseOptionalBoolean(value: string | undefined): boolean | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "y") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "n") {
+    return false;
+  }
+
+  return null;
+}
+
 function extractOrderNodes(container: unknown): JsonRecord[] {
   const root = asRecord(container);
   if (!root) {
@@ -147,6 +189,80 @@ function extractOrderNodes(container: unknown): JsonRecord[] {
   return [];
 }
 
+function extractCustomerNodes(container: unknown): JsonRecord[] {
+  const root = asRecord(container);
+  if (!root) {
+    return [];
+  }
+
+  const directRows = root["customer"] ?? root["contact"] ?? root["row"];
+  if (directRows !== undefined) {
+    return toArray(directRows).map((entry) => asRecord(entry)).filter((entry): entry is JsonRecord => !!entry);
+  }
+
+  const nestedContainers = [asRecord(root["customers"]), asRecord(root["contacts"]), asRecord(root["rows"])];
+  for (const nested of nestedContainers) {
+    if (!nested) {
+      continue;
+    }
+    const nestedRows = extractCustomerNodes(nested);
+    if (nestedRows.length > 0) {
+      return nestedRows;
+    }
+  }
+
+  for (const value of Object.values(root)) {
+    const nested = asRecord(value);
+    if (!nested) {
+      continue;
+    }
+
+    const nestedRows = extractCustomerNodes(nested);
+    if (nestedRows.length > 0) {
+      return nestedRows;
+    }
+  }
+
+  return [];
+}
+
+function extractProductNodes(container: unknown): JsonRecord[] {
+  const root = asRecord(container);
+  if (!root) {
+    return [];
+  }
+
+  const directRows = root["product"] ?? root["top_product"] ?? root["row"];
+  if (directRows !== undefined) {
+    return toArray(directRows).map((entry) => asRecord(entry)).filter((entry): entry is JsonRecord => !!entry);
+  }
+
+  const nestedContainers = [asRecord(root["products"]), asRecord(root["top_products"]), asRecord(root["rows"])];
+  for (const nested of nestedContainers) {
+    if (!nested) {
+      continue;
+    }
+    const nestedRows = extractProductNodes(nested);
+    if (nestedRows.length > 0) {
+      return nestedRows;
+    }
+  }
+
+  for (const value of Object.values(root)) {
+    const nested = asRecord(value);
+    if (!nested) {
+      continue;
+    }
+
+    const nestedRows = extractProductNodes(nested);
+    if (nestedRows.length > 0) {
+      return nestedRows;
+    }
+  }
+
+  return [];
+}
+
 function extractItemNodes(orderNode: JsonRecord): JsonRecord[] {
   const directItems = orderNode["item"];
   if (directItems !== undefined) {
@@ -167,6 +283,89 @@ function extractItemNodes(orderNode: JsonRecord): JsonRecord[] {
   }
 
   return [];
+}
+
+function extractOrderLineNodes(container: unknown): JsonRecord[] {
+  const root = asRecord(container);
+  if (!root) {
+    return [];
+  }
+
+  const directRows = root["order_line"] ?? root["line"] ?? root["row"];
+  if (directRows !== undefined) {
+    return toArray(directRows).map((entry) => asRecord(entry)).filter((entry): entry is JsonRecord => !!entry);
+  }
+
+  const nestedContainers = [asRecord(root["order_lines"]), asRecord(root["lines"]), asRecord(root["rows"]), asRecord(root["orders"])];
+  for (const nested of nestedContainers) {
+    if (!nested) {
+      continue;
+    }
+    const nestedRows = extractOrderLineNodes(nested);
+    if (nestedRows.length > 0) {
+      return nestedRows;
+    }
+  }
+
+  for (const value of Object.values(root)) {
+    const nested = asRecord(value);
+    if (!nested) {
+      continue;
+    }
+
+    const nestedRows = extractOrderLineNodes(nested);
+    if (nestedRows.length > 0) {
+      return nestedRows;
+    }
+  }
+
+  return [];
+}
+
+function buildOrderNodesFromFlatLines(orderLineNodes: JsonRecord[]): JsonRecord[] {
+  const grouped = new Map<string, JsonRecord>();
+  const missingOrderIdNodes: JsonRecord[] = [];
+
+  for (const lineNode of orderLineNodes) {
+    const orderId = readString(lineNode, ["order_id", "orderId", "id"]);
+    const itemNode: JsonRecord = {
+      type: readString(lineNode, ["type", "line_type", "lineType"]),
+      sku: readString(lineNode, ["sku", "product_code"]),
+      name: readString(lineNode, ["name", "product_name"]),
+      category: readString(lineNode, ["category", "category_name"]),
+      quantity: readString(lineNode, ["quantity", "qty"]),
+      unit_price_net_czk: readString(lineNode, ["unit_price_net_czk", "unitPriceNetCzk", "unit_price"]),
+      line_net_czk: readString(lineNode, ["line_net_czk", "lineNetCzk", "line_total_net_czk"])
+    };
+
+    if (!orderId) {
+      missingOrderIdNodes.push({
+        customer_id: readString(lineNode, ["customer_id", "customerId", "customer"]),
+        status: readString(lineNode, ["status", "state"]) ?? "unknown",
+        imported_at: readString(lineNode, ["imported_at", "importedAt", "date"]),
+        item: [itemNode]
+      });
+      continue;
+    }
+
+    const existing = grouped.get(orderId);
+    if (!existing) {
+      grouped.set(orderId, {
+        order_id: orderId,
+        customer_id: readString(lineNode, ["customer_id", "customerId", "customer"]),
+        status: readString(lineNode, ["status", "state"]) ?? "unknown",
+        imported_at: readString(lineNode, ["imported_at", "importedAt", "date"]),
+        item: []
+      });
+    }
+
+    const orderNode = grouped.get(orderId)!;
+    const items = toArray(orderNode.item as JsonRecord[] | JsonRecord | null | undefined);
+    const hasSomeItemData = Object.values(itemNode).some((value) => typeof value === "string" && value.trim().length > 0);
+    orderNode.item = hasSomeItemData ? [...items, itemNode] : items;
+  }
+
+  return [...grouped.values(), ...missingOrderIdNodes];
 }
 
 export const adminRouter = Router();
@@ -370,6 +569,525 @@ adminRouter.post("/customers/:customerId/assign", async (req, res) => {
   }
 });
 
+adminRouter.post("/imports/customers/xml", async (req, res) => {
+  const parsed = importXmlPayloadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "Invalid XML import payload." });
+    return;
+  }
+
+  const sourceName = parsed.data.sourceName?.trim() || "manual-customers-xml";
+
+  const importRun = await prisma.importRun.create({
+    data: {
+      sourceName,
+      triggeredById: req.authUser?.userId ?? null,
+      startedAt: new Date()
+    }
+  });
+
+  let customerNodes: JsonRecord[] = [];
+
+  try {
+    const parsedXml = xmlParser.parse(parsed.data.xml);
+    customerNodes = extractCustomerNodes(parsedXml);
+  } catch {
+    await prisma.importRunError.create({
+      data: {
+        importRunId: importRun.id,
+        recordIndex: 1,
+        message: "XML document is not valid."
+      }
+    });
+
+    const finishedRun = await prisma.importRun.update({
+      where: { id: importRun.id },
+      data: {
+        finishedAt: new Date(),
+        totalRecords: 0,
+        errorRecords: 1
+      }
+    });
+
+    res.status(400).json({
+      message: "XML parsing failed.",
+      run: finishedRun
+    });
+    return;
+  }
+
+  if (customerNodes.length === 0) {
+    const finishedRun = await prisma.importRun.update({
+      where: { id: importRun.id },
+      data: {
+        finishedAt: new Date(),
+        totalRecords: 0
+      }
+    });
+
+    res.json({
+      message: "Import completed. No customer records were found in XML.",
+      run: finishedRun,
+      createdCustomerIds: [],
+      updatedCustomerIds: [],
+      errors: []
+    });
+    return;
+  }
+
+  const errors: Array<{
+    recordIndex: number;
+    orderIdValue: string | null;
+    customerIdValue: string | null;
+    message: string;
+    rawRecord?: Prisma.InputJsonValue;
+  }> = [];
+
+  const createdCustomerIds: number[] = [];
+  const updatedCustomerIds: number[] = [];
+  let hasExplicitCustomerId = false;
+
+  for (const [index, customerNode] of customerNodes.entries()) {
+    const recordIndex = index + 1;
+    const customerIdRaw = readString(customerNode, ["customer_id", "customerId", "id"]) ?? null;
+    const customerName = readString(customerNode, ["name", "customer_name"]) ?? null;
+
+    if (!customerName) {
+      errors.push({
+        recordIndex,
+        orderIdValue: null,
+        customerIdValue: customerIdRaw,
+        message: "Missing required customer name.",
+        rawRecord: customerNode as Prisma.InputJsonValue
+      });
+      continue;
+    }
+
+    const parsedCustomerId = parsePositiveInteger(customerIdRaw ?? undefined);
+    if (customerIdRaw && parsedCustomerId === null) {
+      errors.push({
+        recordIndex,
+        orderIdValue: customerName,
+        customerIdValue: customerIdRaw,
+        message: "customer_id must be a positive integer.",
+        rawRecord: customerNode as Prisma.InputJsonValue
+      });
+      continue;
+    }
+
+    try {
+      if (parsedCustomerId !== null) {
+        hasExplicitCustomerId = true;
+        const existingById = await prisma.customer.findUnique({
+          where: { id: parsedCustomerId },
+          select: { id: true, name: true }
+        });
+
+        if (existingById) {
+          if (existingById.name !== customerName) {
+            await prisma.customer.update({
+              where: { id: parsedCustomerId },
+              data: { name: customerName }
+            });
+          }
+          updatedCustomerIds.push(parsedCustomerId);
+          continue;
+        }
+
+        const created = await prisma.customer.create({
+          data: {
+            id: parsedCustomerId,
+            name: customerName
+          },
+          select: { id: true }
+        });
+        createdCustomerIds.push(created.id);
+        continue;
+      }
+
+      const existingByName = await prisma.customer.findUnique({
+        where: { name: customerName },
+        select: { id: true }
+      });
+
+      if (existingByName) {
+        updatedCustomerIds.push(existingByName.id);
+        continue;
+      }
+
+      const created = await prisma.customer.create({
+        data: {
+          name: customerName
+        },
+        select: { id: true }
+      });
+      createdCustomerIds.push(created.id);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        errors.push({
+          recordIndex,
+          orderIdValue: customerName,
+          customerIdValue: customerIdRaw,
+          message: "Customer name or id already exists.",
+          rawRecord: customerNode as Prisma.InputJsonValue
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (hasExplicitCustomerId) {
+    await prisma.$executeRaw`
+      SELECT setval(
+        pg_get_serial_sequence('"Customer"', 'id'),
+        COALESCE((SELECT MAX(id) FROM "Customer"), 1),
+        true
+      )
+    `;
+  }
+
+  if (errors.length > 0) {
+    await prisma.importRunError.createMany({
+      data: errors.map((error) => ({
+        importRunId: importRun.id,
+        recordIndex: error.recordIndex,
+        orderIdValue: error.orderIdValue,
+        customerIdValue: error.customerIdValue,
+        message: error.message,
+        rawRecord: error.rawRecord ?? Prisma.JsonNull
+      }))
+    });
+  }
+
+  const finishedRun = await prisma.importRun.update({
+    where: { id: importRun.id },
+    data: {
+      finishedAt: new Date(),
+      totalRecords: customerNodes.length,
+      createdOrders: createdCustomerIds.length,
+      updatedOrders: updatedCustomerIds.length,
+      errorRecords: errors.length
+    }
+  });
+
+  res.json({
+    message: "Customer import completed.",
+    run: finishedRun,
+    createdCustomerIds,
+    updatedCustomerIds,
+    errors
+  });
+});
+
+adminRouter.post("/imports/products/xml", async (req, res) => {
+  const parsed = importXmlPayloadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "Invalid XML import payload." });
+    return;
+  }
+
+  const sourceName = parsed.data.sourceName?.trim() || "manual-products-xml";
+
+  const importRun = await prisma.importRun.create({
+    data: {
+      sourceName,
+      triggeredById: req.authUser?.userId ?? null,
+      startedAt: new Date()
+    }
+  });
+
+  let productNodes: JsonRecord[] = [];
+
+  try {
+    const parsedXml = xmlParser.parse(parsed.data.xml);
+    productNodes = extractProductNodes(parsedXml);
+  } catch {
+    await prisma.importRunError.create({
+      data: {
+        importRunId: importRun.id,
+        recordIndex: 1,
+        message: "XML document is not valid."
+      }
+    });
+
+    const finishedRun = await prisma.importRun.update({
+      where: { id: importRun.id },
+      data: {
+        finishedAt: new Date(),
+        totalRecords: 0,
+        errorRecords: 1
+      }
+    });
+
+    res.status(400).json({
+      message: "XML parsing failed.",
+      run: finishedRun
+    });
+    return;
+  }
+
+  if (productNodes.length === 0) {
+    const finishedRun = await prisma.importRun.update({
+      where: { id: importRun.id },
+      data: {
+        finishedAt: new Date(),
+        totalRecords: 0
+      }
+    });
+
+    res.json({
+      message: "Import completed. No product records were found in XML.",
+      run: finishedRun,
+      createdProductIds: [],
+      updatedProductIds: [],
+      errors: []
+    });
+    return;
+  }
+
+  const errors: Array<{
+    recordIndex: number;
+    orderIdValue: string | null;
+    customerIdValue: string | null;
+    message: string;
+    rawRecord?: Prisma.InputJsonValue;
+  }> = [];
+
+  const createdProductIds: number[] = [];
+  const updatedProductIds: number[] = [];
+  let hasExplicitProductId = false;
+
+  for (const [index, productNode] of productNodes.entries()) {
+    const recordIndex = index + 1;
+    const productIdRaw = readString(productNode, ["product_id", "top_product_id", "id"]) ?? null;
+    const skuRaw = readString(productNode, ["sku", "product_code"]) ?? null;
+    const nameRaw = readString(productNode, ["name", "product_name"]) ?? null;
+    const categoryName = readString(productNode, ["category_name", "category"]) ?? null;
+    const unitPriceRaw = readString(productNode, ["unit_price_net_czk", "unitPriceNetCzk", "unit_price"]);
+    const stockRaw = readString(productNode, ["stock_quantity", "stock_qty", "stock"]);
+    const historicalSalesRaw = readString(productNode, ["historical_sales_qty", "historicalSalesQty"]);
+    const incomingRaw = readString(productNode, ["incoming_from_supplier_qty", "incomingFromSupplierQty", "incoming"]);
+    const isActiveRaw = readString(productNode, ["is_active", "isActive", "active"]);
+
+    const parsedProductId = parsePositiveInteger(productIdRaw ?? undefined);
+    if (productIdRaw && parsedProductId === null) {
+      errors.push({
+        recordIndex,
+        orderIdValue: skuRaw ?? nameRaw,
+        customerIdValue: null,
+        message: "product_id must be a positive integer.",
+        rawRecord: productNode as Prisma.InputJsonValue
+      });
+      continue;
+    }
+
+    const parsedUnitPrice = parseDecimal(unitPriceRaw);
+    if (unitPriceRaw && parsedUnitPrice === null) {
+      errors.push({
+        recordIndex,
+        orderIdValue: skuRaw ?? nameRaw,
+        customerIdValue: null,
+        message: "unit_price_net_czk must be a valid decimal number.",
+        rawRecord: productNode as Prisma.InputJsonValue
+      });
+      continue;
+    }
+
+    const parsedStock = parseOptionalInteger(stockRaw);
+    if (stockRaw && parsedStock === null) {
+      errors.push({
+        recordIndex,
+        orderIdValue: skuRaw ?? nameRaw,
+        customerIdValue: null,
+        message: "stock_quantity must be a valid integer number.",
+        rawRecord: productNode as Prisma.InputJsonValue
+      });
+      continue;
+    }
+
+    const parsedHistoricalSales = parseOptionalInteger(historicalSalesRaw);
+    if (historicalSalesRaw && parsedHistoricalSales === null) {
+      errors.push({
+        recordIndex,
+        orderIdValue: skuRaw ?? nameRaw,
+        customerIdValue: null,
+        message: "historical_sales_qty must be a valid integer number.",
+        rawRecord: productNode as Prisma.InputJsonValue
+      });
+      continue;
+    }
+
+    const parsedIncoming = parseOptionalInteger(incomingRaw);
+    if (incomingRaw && parsedIncoming === null) {
+      errors.push({
+        recordIndex,
+        orderIdValue: skuRaw ?? nameRaw,
+        customerIdValue: null,
+        message: "incoming_from_supplier_qty must be a valid integer number.",
+        rawRecord: productNode as Prisma.InputJsonValue
+      });
+      continue;
+    }
+
+    const parsedIsActive = parseOptionalBoolean(isActiveRaw);
+    if (isActiveRaw && parsedIsActive === null) {
+      errors.push({
+        recordIndex,
+        orderIdValue: skuRaw ?? nameRaw,
+        customerIdValue: null,
+        message: "is_active must be true/false (or yes/no, 1/0).",
+        rawRecord: productNode as Prisma.InputJsonValue
+      });
+      continue;
+    }
+
+    if (!skuRaw && !nameRaw && parsedProductId === null) {
+      errors.push({
+        recordIndex,
+        orderIdValue: null,
+        customerIdValue: null,
+        message: "Each product row needs at least one identifier: product_id, sku, or name.",
+        rawRecord: productNode as Prisma.InputJsonValue
+      });
+      continue;
+    }
+
+    try {
+      let existingProduct:
+        | {
+            id: number;
+          }
+        | null = null;
+
+      if (parsedProductId !== null) {
+        hasExplicitProductId = true;
+        existingProduct = await prisma.globalTopProduct.findUnique({
+          where: { id: parsedProductId },
+          select: { id: true }
+        });
+      }
+
+      if (!existingProduct && skuRaw) {
+        existingProduct = await prisma.globalTopProduct.findUnique({
+          where: { sku: skuRaw },
+          select: { id: true }
+        });
+      }
+
+      if (!existingProduct && nameRaw) {
+        existingProduct = await prisma.globalTopProduct.findUnique({
+          where: { name: nameRaw },
+          select: { id: true }
+        });
+      }
+
+      const productData: Prisma.GlobalTopProductUncheckedCreateInput = {
+        ...(parsedProductId !== null ? { id: parsedProductId } : {}),
+        name: nameRaw ?? (skuRaw ? skuRaw : `Imported-${recordIndex}`),
+        sku: skuRaw,
+        categoryName,
+        unitPriceNetCzk: parsedUnitPrice,
+        stockQuantity: parsedStock,
+        historicalSalesQty: parsedHistoricalSales,
+        incomingFromSupplierQty: parsedIncoming,
+        isActive: parsedIsActive ?? true
+      };
+
+      if (existingProduct) {
+        const updateData: Prisma.GlobalTopProductUncheckedUpdateInput = {
+          ...(nameRaw ? { name: nameRaw } : {}),
+          ...(skuRaw !== null ? { sku: skuRaw } : {}),
+          ...(categoryName !== null ? { categoryName } : {}),
+          ...(unitPriceRaw !== undefined ? { unitPriceNetCzk: parsedUnitPrice } : {}),
+          ...(stockRaw !== undefined ? { stockQuantity: parsedStock } : {}),
+          ...(historicalSalesRaw !== undefined ? { historicalSalesQty: parsedHistoricalSales } : {}),
+          ...(incomingRaw !== undefined ? { incomingFromSupplierQty: parsedIncoming } : {}),
+          ...(parsedIsActive !== null ? { isActive: parsedIsActive } : {})
+        };
+
+        await prisma.globalTopProduct.update({
+          where: { id: existingProduct.id },
+          data: updateData
+        });
+
+        updatedProductIds.push(existingProduct.id);
+      } else {
+        if (!nameRaw) {
+          errors.push({
+            recordIndex,
+            orderIdValue: skuRaw ?? null,
+            customerIdValue: null,
+            message: "name is required when creating a new product.",
+            rawRecord: productNode as Prisma.InputJsonValue
+          });
+          continue;
+        }
+
+        const created = await prisma.globalTopProduct.create({
+          data: productData,
+          select: { id: true }
+        });
+        createdProductIds.push(created.id);
+      }
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        errors.push({
+          recordIndex,
+          orderIdValue: skuRaw ?? nameRaw,
+          customerIdValue: null,
+          message: "Product name or SKU already exists.",
+          rawRecord: productNode as Prisma.InputJsonValue
+        });
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (hasExplicitProductId) {
+    await prisma.$executeRaw`
+      SELECT setval(
+        pg_get_serial_sequence('"GlobalTopProduct"', 'id'),
+        COALESCE((SELECT MAX(id) FROM "GlobalTopProduct"), 1),
+        true
+      )
+    `;
+  }
+
+  if (errors.length > 0) {
+    await prisma.importRunError.createMany({
+      data: errors.map((error) => ({
+        importRunId: importRun.id,
+        recordIndex: error.recordIndex,
+        orderIdValue: error.orderIdValue,
+        customerIdValue: error.customerIdValue,
+        message: error.message,
+        rawRecord: error.rawRecord ?? Prisma.JsonNull
+      }))
+    });
+  }
+
+  const finishedRun = await prisma.importRun.update({
+    where: { id: importRun.id },
+    data: {
+      finishedAt: new Date(),
+      totalRecords: productNodes.length,
+      createdOrders: createdProductIds.length,
+      updatedOrders: updatedProductIds.length,
+      errorRecords: errors.length
+    }
+  });
+
+  res.json({
+    message: "Product import completed.",
+    run: finishedRun,
+    createdProductIds,
+    updatedProductIds,
+    errors
+  });
+});
+
 adminRouter.get("/imports", async (_req, res) => {
   const imports = await prisma.importRun.findMany({
     orderBy: { startedAt: "desc" },
@@ -468,10 +1186,20 @@ adminRouter.post("/imports/orders/xml", async (req, res) => {
   });
 
   let orderNodes: JsonRecord[] = [];
+  let totalSourceRecords = 0;
 
   try {
     const parsedXml = xmlParser.parse(parsed.data.xml);
     orderNodes = extractOrderNodes(parsedXml);
+    totalSourceRecords = orderNodes.length;
+
+    if (orderNodes.length === 0) {
+      const orderLineNodes = extractOrderLineNodes(parsedXml);
+      if (orderLineNodes.length > 0) {
+        orderNodes = buildOrderNodesFromFlatLines(orderLineNodes);
+        totalSourceRecords = orderLineNodes.length;
+      }
+    }
   } catch {
     await prisma.importRunError.create({
       data: {
@@ -502,7 +1230,7 @@ adminRouter.post("/imports/orders/xml", async (req, res) => {
       where: { id: importRun.id },
       data: {
         finishedAt: new Date(),
-        totalRecords: 0
+        totalRecords: totalSourceRecords
       }
     });
 
@@ -714,7 +1442,7 @@ adminRouter.post("/imports/orders/xml", async (req, res) => {
     where: { id: importRun.id },
     data: {
       finishedAt: new Date(),
-      totalRecords: orderNodes.length,
+      totalRecords: totalSourceRecords,
       createdOrders: createdOrderIds.length,
       updatedOrders: updatedOrderIds.length,
       errorRecords: errors.length
