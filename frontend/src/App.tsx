@@ -582,10 +582,15 @@ function App() {
       })
       .join("");
 
+    const orderStatuses = [...new Set(detail.orders.map((order) => order.status))].sort((left, right) => left.localeCompare(right));
+    const orderStatusOptionsHtml = [
+      `<option value="">all</option>`,
+      ...orderStatuses.map((status) => `<option value="${escapeHtml(status)}">${escapeHtml(status)}</option>`)
+    ].join("");
+
     const ordersRowsHtml = detail.orders
       .map((order) => {
-        const clickScript = `if (window.opener && typeof window.opener.crmOpenOrderWindowById === 'function') { window.opener.crmOpenOrderWindowById(${order.id}); } else { alert('Main CRM window is not available.'); } return false;`;
-        return `<tr><td><a href="#" onclick="${clickScript}">${escapeHtml(order.orderId)}</a></td><td>${escapeHtml(order.status)}</td><td>${escapeHtml(new Date(order.importedAt).toLocaleString())}</td><td>${escapeHtml(order.totals.productNetCzk)}</td><td>${escapeHtml(order.totals.allNetCzk)}</td><td>${order.totals.lineCount}</td><td><button onclick="${clickScript}">Open</button></td></tr>`;
+        return `<tr data-order-id="${order.id}" data-status="${escapeHtml(order.status)}"><td><a href="#" data-open-order-id="${order.id}">${escapeHtml(order.orderId)}</a></td><td>${escapeHtml(order.status)}</td><td>${escapeHtml(new Date(order.importedAt).toLocaleString())}</td><td>${escapeHtml(order.totals.allNetCzk)}</td><td>${order.totals.lineCount}</td></tr>`;
       })
       .join("");
 
@@ -643,20 +648,24 @@ function App() {
 
     <div class="card">
       <h2>Orders (${detail.orders.length})</h2>
+      <p>
+        Status:
+        <select id="orders-status-filter">
+          ${orderStatusOptionsHtml}
+        </select>
+      </p>
       <table>
         <thead>
           <tr>
             <th>Order ID</th>
             <th>Status</th>
-            <th>Imported at</th>
-            <th>Product CZK</th>
-            <th>Total CZK</th>
-            <th>Lines</th>
-            <th>Action</th>
+            <th>Last change</th>
+            <th>Total</th>
+            <th>Products</th>
           </tr>
         </thead>
-        <tbody>
-          ${ordersRowsHtml || '<tr><td colspan="7">No orders.</td></tr>'}
+        <tbody id="orders-table-body">
+          ${ordersRowsHtml || '<tr><td colspan="5">No orders.</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -713,6 +722,141 @@ function App() {
       </table>
     </div>
   </div>
+  <script>
+    (() => {
+      const apiBaseUrl = ${JSON.stringify(API_BASE_URL)};
+      const authToken = ${JSON.stringify(token)};
+
+      const escapeHtml = (value) => value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+
+      const renderOrderWindow = (detail) => {
+        const rowsHtml = (detail.products || []).map((line) => {
+          const productName = escapeHtml(line.productName || "Unknown product");
+          const sku = line.sku ? " (" + escapeHtml(line.sku) + ")" : "";
+          const unitPrice = line.unitPriceFromProductNetCzk ? escapeHtml(line.unitPriceFromProductNetCzk) + " CZK" : "-";
+          const qty = escapeHtml(String(line.quantity ?? ""));
+          const lineTotal = line.lineTotalNetCzk ? escapeHtml(line.lineTotalNetCzk) + " CZK" : "-";
+          return "<tr><td>" + productName + sku + "</td><td>" + unitPrice + "</td><td>" + qty + "</td><td>" + lineTotal + "</td></tr>";
+        }).join("");
+
+        return \`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Order \${escapeHtml(detail.order.orderId)}</title>
+  <style>
+    body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#eef2f7;color:#1d2a3a}
+    .wrap{max-width:1080px;margin:0 auto;padding:24px}
+    .card{background:#fff;border:1px solid #d6dbe7;border-radius:12px;padding:16px;margin-bottom:16px}
+    h1{margin:0 0 8px;font-size:28px}
+    h2{margin:0 0 10px;font-size:20px}
+    p{margin:4px 0}
+    table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #d6dbe7;padding:8px;text-align:left;vertical-align:top}
+    th{background:#f8f9fc}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Order \${escapeHtml(detail.order.orderId)}</h1>
+      <p>Status: <strong>\${escapeHtml(detail.order.status)}</strong></p>
+      <p>Customer: <strong>\${escapeHtml(detail.order.customer.name)}</strong></p>
+      <p>Sales rep: <strong>\${escapeHtml((detail.order.currentSalesRep && detail.order.currentSalesRep.name) || "-")}</strong></p>
+      <p>Last change: <strong>\${escapeHtml(new Date(detail.order.importedAt).toLocaleString())}</strong></p>
+    </div>
+    <div class="card">
+      <h2>Products (\${(detail.products || []).length})</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Unit price</th>
+            <th>Quantity</th>
+            <th>Line total</th>
+          </tr>
+        </thead>
+        <tbody>
+          \${rowsHtml || '<tr><td colspan="4">No product lines in this order.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>\`;
+      };
+
+      const openOrderById = async (orderDbId) => {
+        if (window.opener && typeof window.opener.crmOpenOrderWindowById === "function") {
+          window.opener.crmOpenOrderWindowById(orderDbId);
+          return;
+        }
+
+        const popup = window.open("", "_blank", "width=1080,height=760");
+        if (!popup) {
+          alert("Popup blocked. Please allow popups for this app.");
+          return;
+        }
+
+        popup.document.open();
+        popup.document.write("<!doctype html><html><head><meta charset='utf-8'><title>Order</title></head><body style='font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937'><h2>Loading order...</h2></body></html>");
+        popup.document.close();
+
+        try {
+          const response = await fetch(apiBaseUrl + "/api/workspace/orders/" + orderDbId, {
+            headers: {
+              Authorization: "Bearer " + authToken
+            }
+          });
+
+          if (!response.ok) {
+            popup.document.open();
+            popup.document.write("<!doctype html><html><head><meta charset='utf-8'><title>Order</title></head><body style='font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937'><h2>Order detail is not available.</h2></body></html>");
+            popup.document.close();
+            return;
+          }
+
+          const detail = await response.json();
+          popup.document.open();
+          popup.document.write(renderOrderWindow(detail));
+          popup.document.close();
+        } catch {
+          popup.document.open();
+          popup.document.write("<!doctype html><html><head><meta charset='utf-8'><title>Order</title></head><body style='font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937'><h2>Order detail request failed.</h2></body></html>");
+          popup.document.close();
+        }
+      };
+
+      document.querySelectorAll("[data-open-order-id]").forEach((anchor) => {
+        anchor.addEventListener("click", (event) => {
+          event.preventDefault();
+          const orderDbId = Number(anchor.getAttribute("data-open-order-id"));
+          if (!Number.isFinite(orderDbId)) {
+            return;
+          }
+          void openOrderById(orderDbId);
+        });
+      });
+
+      const statusFilter = document.getElementById("orders-status-filter");
+      const orderRows = Array.from(document.querySelectorAll("#orders-table-body tr[data-order-id]"));
+
+      if (statusFilter) {
+        statusFilter.addEventListener("change", () => {
+          const selected = statusFilter.value;
+          orderRows.forEach((row) => {
+            const rowStatus = row.getAttribute("data-status") || "";
+            row.style.display = !selected || selected === rowStatus ? "" : "none";
+          });
+        });
+      }
+    })();
+  </script>
 </body>
 </html>`;
 
