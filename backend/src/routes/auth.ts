@@ -1,4 +1,5 @@
-﻿import { Router } from "express";
+import { Router } from "express";
+import type { Response } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
@@ -6,6 +7,13 @@ import { prisma } from "../lib/prisma";
 import { env } from "../config/env";
 import { requireAuth } from "../middleware/auth";
 import type { AuthUser } from "../types/auth";
+import {
+  assertDevModeEnabled,
+  deleteDevUserByEmail,
+  readDevUsersFile,
+  upsertDevUser,
+  type DevUser
+} from "../lib/dev-users";
 
 const loginSchema = z.object({
   email: z.email(),
@@ -14,6 +22,17 @@ const loginSchema = z.object({
 
 const refreshSchema = z.object({
   refreshToken: z.string().min(1)
+});
+
+const devUserPayloadSchema = z.object({
+  email: z.email(),
+  name: z.string().trim().min(1).max(120),
+  role: z.enum(["admin", "sales_rep"]),
+  password: z.string().min(6).max(120)
+});
+
+const devUserEmailParamSchema = z.object({
+  email: z.string().trim().min(1)
 });
 
 function issueTokens(user: AuthUser): { accessToken: string; refreshToken: string } {
@@ -29,6 +48,34 @@ function issueTokens(user: AuthUser): { accessToken: string; refreshToken: strin
   });
 
   return { accessToken, refreshToken };
+}
+
+function failIfNotDevMode(res: Response): boolean {
+  if (assertDevModeEnabled()) {
+    return false;
+  }
+
+  res.status(403).json({ message: "Dev users manager is disabled in production." });
+  return true;
+}
+
+async function syncDevUserToDatabase(devUser: DevUser): Promise<void> {
+  const passwordHash = await bcrypt.hash(devUser.password, 10);
+
+  await prisma.user.upsert({
+    where: { email: devUser.email },
+    update: {
+      name: devUser.name,
+      role: devUser.role,
+      passwordHash
+    },
+    create: {
+      email: devUser.email,
+      name: devUser.name,
+      role: devUser.role,
+      passwordHash
+    }
+  });
 }
 
 export const authRouter = Router();
@@ -115,3 +162,88 @@ authRouter.get("/me", requireAuth, (req, res) => {
 authRouter.post("/logout", (_req, res) => {
   res.status(204).send();
 });
+
+authRouter.get("/dev-users", async (_req, res) => {
+  if (failIfNotDevMode(res)) {
+    return;
+  }
+
+  const users = await readDevUsersFile();
+  for (const user of users) {
+    await syncDevUserToDatabase(user);
+  }
+
+  res.json({
+    users,
+    message: "Development only: this endpoint exposes plain-text passwords."
+  });
+});
+
+authRouter.post("/dev-users", async (req, res) => {
+  if (failIfNotDevMode(res)) {
+    return;
+  }
+
+  const parsed = devUserPayloadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "Invalid dev user payload." });
+    return;
+  }
+
+  const normalizedUser: DevUser = {
+    email: parsed.data.email.trim().toLowerCase(),
+    name: parsed.data.name.trim(),
+    role: parsed.data.role,
+    password: parsed.data.password
+  };
+
+  const previousUsers = await readDevUsersFile();
+  const existed = previousUsers.some((user) => user.email === normalizedUser.email);
+  const users = await upsertDevUser(normalizedUser);
+  await syncDevUserToDatabase(normalizedUser);
+
+  res.status(existed ? 200 : 201).json({
+    users,
+    message: existed ? "Dev user updated." : "Dev user created."
+  });
+});
+
+authRouter.delete("/dev-users/:email", async (req, res) => {
+  if (failIfNotDevMode(res)) {
+    return;
+  }
+
+  const parsed = devUserEmailParamSchema.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ message: "Invalid email parameter." });
+    return;
+  }
+
+  const targetEmail = decodeURIComponent(parsed.data.email).trim().toLowerCase();
+  const { users, removed } = await deleteDevUserByEmail(targetEmail);
+  if (!removed) {
+    res.status(404).json({ message: "Dev user not found." });
+    return;
+  }
+
+  const dbUser = await prisma.user.findUnique({
+    where: { email: targetEmail },
+    select: { id: true }
+  });
+
+  if (dbUser) {
+    const disabledPasswordHash = await bcrypt.hash(`disabled-${targetEmail}-${Date.now()}`, 10);
+    await prisma.user.update({
+      where: { id: dbUser.id },
+      data: {
+        passwordHash: disabledPasswordHash
+      }
+    });
+  }
+
+  res.json({
+    users,
+    message: "Dev user removed. Database password was disabled for this account."
+  });
+});
+

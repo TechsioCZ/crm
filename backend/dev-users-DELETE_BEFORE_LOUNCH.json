@@ -1,0 +1,40 @@
+{
+  "users": [
+    {
+      "email": "admin@crm.local",
+      "name": "Admin",
+      "role": "admin",
+      "password": "Admin123!"
+    },
+    {
+      "email": "sales01@crm.local",
+      "name": "Obchodnik 01",
+      "role": "sales_rep",
+      "password": "Sales123!"
+    },
+    {
+      "email": "sales02@crm.local",
+      "name": "Obchodnik 02",
+      "role": "sales_rep",
+      "password": "Sales123!"
+    },
+    {
+      "email": "sales03@crm.local",
+      "name": "Obchodnik 03",
+      "role": "sales_rep",
+      "password": "Sales123!"
+    },
+    {
+      "email": "sales04@crm.local",
+      "name": "Obchodnik 04",
+      "role": "sales_rep",
+      "password": "Sales123!"
+    },
+    {
+      "email": "sales05@crm.local",
+      "name": "Obchodnik 05",
+      "role": "sales_rep",
+      "password": "Sales123!"
+    }
+  ]
+}

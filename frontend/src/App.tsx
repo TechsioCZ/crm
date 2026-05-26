@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import "./App.css";
 
@@ -21,6 +21,13 @@ type SalesRepOption = {
   id: number;
   name: string;
   email: string;
+};
+
+type DevUser = {
+  email: string;
+  name: string;
+  role: UserRole;
+  password: string;
 };
 
 type ContactRow = {
@@ -157,6 +164,15 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000
 function App() {
   const formatMoneyOrDash = (value: string | null) => (value === null ? "-" : `${value} CZK`);
   const formatNumberOrDash = (value: number | null) => (value === null ? "-" : value.toString());
+  const moneyToNumber = (value: string) => Number.parseFloat(value);
+  const formatMoney = (value: number) => value.toFixed(2);
+  const escapeHtml = (value: string) =>
+    value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
 
   const [email, setEmail] = useState("admin@crm.local");
   const [password, setPassword] = useState("Admin123!");
@@ -166,6 +182,14 @@ function App() {
   const [healthStatus, setHealthStatus] = useState("Checking...");
   const [dbStatus, setDbStatus] = useState("Checking...");
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("contact_list");
+  const [devUsers, setDevUsers] = useState<DevUser[]>([]);
+  const [devUsersLoading, setDevUsersLoading] = useState(false);
+  const [devUsersMessage, setDevUsersMessage] = useState("Dev users not loaded yet.");
+  const [newDevUserEmail, setNewDevUserEmail] = useState("");
+  const [newDevUserName, setNewDevUserName] = useState("");
+  const [newDevUserRole, setNewDevUserRole] = useState<UserRole>("sales_rep");
+  const [newDevUserPassword, setNewDevUserPassword] = useState("");
+  const [devBusyEmail, setDevBusyEmail] = useState<string | null>(null);
 
   const [salesReps, setSalesReps] = useState<SalesRepOption[]>([]);
   const [categoryNames, setCategoryNames] = useState<string[]>([]);
@@ -194,7 +218,6 @@ function App() {
   const [orderDateToFilter, setOrderDateToFilter] = useState("");
   const [orderMessage, setOrderMessage] = useState("Order list not loaded yet.");
   const [ordersLoading, setOrdersLoading] = useState(false);
-  const [expandedOrderIds, setExpandedOrderIds] = useState<Record<number, boolean>>({});
   const [orderDetailsById, setOrderDetailsById] = useState<Record<number, OrderDetailResponse>>({});
   const [orderDetailLoadingById, setOrderDetailLoadingById] = useState<Record<number, boolean>>({});
 
@@ -218,9 +241,98 @@ function App() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [dashboardMessage, setDashboardMessage] = useState("Dashboard not loaded yet.");
   const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardSalesRepFilterIds, setDashboardSalesRepFilterIds] = useState<number[]>([]);
 
   const isLoggedIn = useMemo(() => Boolean(token), [token]);
   const isAdmin = user?.role === "admin";
+
+  const dashboardSalesRepOptions = useMemo(() => {
+    if (!dashboard) {
+      return [] as Array<{ id: number; name: string }>;
+    }
+
+    return dashboard.categoryShareBySalesRep.map((rep) => ({
+      id: rep.salesRepId,
+      name: rep.salesRepName
+    }));
+  }, [dashboard]);
+
+  const dashboardSelectedRepNames = useMemo(() => {
+    if (dashboardSalesRepFilterIds.length === 0) {
+      return "all salesmen";
+    }
+
+    const selectedSet = new Set(dashboardSalesRepFilterIds);
+    const names = dashboardSalesRepOptions.filter((option) => selectedSet.has(option.id)).map((option) => option.name);
+    return names.join(", ") || "all salesmen";
+  }, [dashboardSalesRepFilterIds, dashboardSalesRepOptions]);
+
+  const categoryShareView = useMemo(() => {
+    if (!dashboard) {
+      return [] as Array<{ category: string; turnoverNetCzk: string; sharePct: string }>;
+    }
+
+    if (dashboardSalesRepFilterIds.length === 0) {
+      return dashboard.categoryShareTotal;
+    }
+
+    const selectedSet = new Set(dashboardSalesRepFilterIds);
+    const totals = new Map<string, number>();
+
+    for (const rep of dashboard.categoryShareBySalesRep) {
+      if (!selectedSet.has(rep.salesRepId)) {
+        continue;
+      }
+      for (const item of rep.categories) {
+        const value = moneyToNumber(item.turnoverNetCzk);
+        totals.set(item.category, (totals.get(item.category) ?? 0) + value);
+      }
+    }
+
+    const totalTurnover = [...totals.values()].reduce((sum, value) => sum + value, 0);
+    return [...totals.entries()]
+      .map(([category, turnover]) => ({
+        category,
+        turnoverNetCzk: formatMoney(turnover),
+        sharePct: totalTurnover === 0 ? "0.00" : ((turnover / totalTurnover) * 100).toFixed(2)
+      }))
+      .sort((left, right) => moneyToNumber(right.turnoverNetCzk) - moneyToNumber(left.turnoverNetCzk));
+  }, [dashboard, dashboardSalesRepFilterIds]);
+
+  const topProductSalesView = useMemo(() => {
+    if (!dashboard) {
+      return [] as Array<{ topProductId: number; topProductName: string; turnoverNetCzk: string; sharePct: string }>;
+    }
+
+    if (dashboardSalesRepFilterIds.length === 0) {
+      return dashboard.topProductSalesTotal;
+    }
+
+    const selectedSet = new Set(dashboardSalesRepFilterIds);
+    const totals = new Map<number, { topProductName: string; turnover: number }>();
+
+    for (const rep of dashboard.topProductSalesBySalesRep) {
+      if (!selectedSet.has(rep.salesRepId)) {
+        continue;
+      }
+
+      for (const item of rep.products) {
+        const current = totals.get(item.topProductId) ?? { topProductName: item.topProductName, turnover: 0 };
+        current.turnover += moneyToNumber(item.turnoverNetCzk);
+        totals.set(item.topProductId, current);
+      }
+    }
+
+    const totalTurnover = [...totals.values()].reduce((sum, row) => sum + row.turnover, 0);
+    return [...totals.entries()]
+      .map(([topProductId, row]) => ({
+        topProductId,
+        topProductName: row.topProductName,
+        turnoverNetCzk: formatMoney(row.turnover),
+        sharePct: totalTurnover === 0 ? "0.00" : ((row.turnover / totalTurnover) * 100).toFixed(2)
+      }))
+      .sort((left, right) => moneyToNumber(right.turnoverNetCzk) - moneyToNumber(left.turnoverNetCzk));
+  }, [dashboard, dashboardSalesRepFilterIds]);
 
   const tabs: Array<{ id: WorkspaceTab; label: string }> = [
     { id: "contact_list", label: "contact list" },
@@ -229,6 +341,27 @@ function App() {
     { id: "categories", label: "categories" },
     { id: "dashboard", label: "dashboard" }
   ];
+
+  const loadDevUsers = useCallback(async () => {
+    setDevUsersLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/dev-users`);
+      if (!response.ok) {
+        setDevUsers([]);
+        setDevUsersMessage(`Dev users unavailable (${response.status}).`);
+        return;
+      }
+
+      const body = (await response.json()) as { users: DevUser[]; message?: string };
+      setDevUsers(body.users);
+      setDevUsersMessage(body.message ?? `Loaded ${body.users.length} dev users.`);
+    } catch {
+      setDevUsers([]);
+      setDevUsersMessage("Dev users request failed.");
+    } finally {
+      setDevUsersLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     const checkBackend = async () => {
@@ -255,7 +388,17 @@ function App() {
       setHealthStatus("Cannot reach backend");
       setDbStatus("Cannot verify database");
     });
-  }, []);
+
+    const devUsersTimer = window.setTimeout(() => {
+      loadDevUsers().catch(() => {
+        setDevUsersMessage("Dev users request failed.");
+      });
+    }, 0);
+
+    return () => {
+      window.clearTimeout(devUsersTimer);
+    };
+  }, [loadDevUsers]);
 
   const loadMeta = async (accessToken: string) => {
     try {
@@ -383,7 +526,6 @@ function App() {
 
       const body = (await response.json()) as { orders: OrderRow[]; summary: { count: number } };
       setOrders(body.orders);
-      setExpandedOrderIds({});
       setOrderDetailsById({});
       setOrderDetailLoadingById({});
       setOrderMessage(`Loaded ${body.summary.count} orders.`);
@@ -395,7 +537,7 @@ function App() {
     }
   };
 
-  const loadOrderDetail = async (accessToken: string, orderDbId: number) => {
+  const loadOrderDetail = async (accessToken: string, orderDbId: number): Promise<OrderDetailResponse | null> => {
     setOrderDetailLoadingById((prev) => ({ ...prev, [orderDbId]: true }));
     try {
       const response = await fetch(`${API_BASE_URL}/api/workspace/orders/${orderDbId}`, {
@@ -404,7 +546,7 @@ function App() {
 
       if (!response.ok) {
         setOrderMessage(`Order detail failed (${response.status}) for order DB id ${orderDbId}.`);
-        return;
+        return null;
       }
 
       const body = (await response.json()) as OrderDetailResponse;
@@ -412,28 +554,101 @@ function App() {
         ...prev,
         [orderDbId]: body
       }));
+      return body;
     } catch {
       setOrderMessage(`Order detail request failed for order DB id ${orderDbId}.`);
+      return null;
     } finally {
       setOrderDetailLoadingById((prev) => ({ ...prev, [orderDbId]: false }));
     }
   };
 
-  const handleToggleOrderExpand = async (orderDbId: number) => {
+  const handleOpenOrderWindow = async (order: OrderRow) => {
     if (!token) {
       return;
     }
 
-    const isExpanded = expandedOrderIds[orderDbId] ?? false;
-    if (isExpanded) {
-      setExpandedOrderIds((prev) => ({ ...prev, [orderDbId]: false }));
+    const orderWindow = window.open("", "_blank", "width=1080,height=760");
+    if (!orderWindow) {
+      setOrderMessage("Popup blocked. Please allow popups for this app.");
       return;
     }
 
-    setExpandedOrderIds((prev) => ({ ...prev, [orderDbId]: true }));
-    if (!orderDetailsById[orderDbId]) {
-      await loadOrderDetail(token, orderDbId);
+    const loadingHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Order ${escapeHtml(order.orderId)}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Loading order ${escapeHtml(order.orderId)}...</h2></body></html>`;
+    orderWindow.document.open();
+    orderWindow.document.write(loadingHtml);
+    orderWindow.document.close();
+
+    const detail = orderDetailsById[order.id] ?? (await loadOrderDetail(token, order.id));
+
+    if (!detail) {
+      const failHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Order ${escapeHtml(order.orderId)}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Order detail is not available.</h2><p>Please close this window and try again.</p></body></html>`;
+      orderWindow.document.open();
+      orderWindow.document.write(failHtml);
+      orderWindow.document.close();
+      return;
     }
+
+    const rowsHtml = detail.products
+      .map((line) => {
+        const productName = escapeHtml(line.productName);
+        const sku = line.sku ? ` (${escapeHtml(line.sku)})` : "";
+        const unitPrice = line.unitPriceFromProductNetCzk ? `${escapeHtml(line.unitPriceFromProductNetCzk)} CZK` : "-";
+        const qty = escapeHtml(line.quantity);
+        const lineTotal = line.lineTotalNetCzk ? `${escapeHtml(line.lineTotalNetCzk)} CZK` : "-";
+        return `<tr><td>${productName}${sku}</td><td>${unitPrice}</td><td>${qty}</td><td>${lineTotal}</td></tr>`;
+      })
+      .join("");
+
+    const fullHtml = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Order ${escapeHtml(detail.order.orderId)}</title>
+  <style>
+    body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#eef2f7;color:#1d2a3a}
+    .wrap{max-width:1080px;margin:0 auto;padding:24px}
+    .card{background:#fff;border:1px solid #d6dbe7;border-radius:12px;padding:16px;margin-bottom:16px}
+    h1{margin:0 0 8px;font-size:28px}
+    h2{margin:0 0 10px;font-size:20px}
+    p{margin:4px 0}
+    table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #d6dbe7;padding:8px;text-align:left;vertical-align:top}
+    th{background:#f8f9fc}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Order ${escapeHtml(detail.order.orderId)}</h1>
+      <p>Status: <strong>${escapeHtml(detail.order.status)}</strong></p>
+      <p>Customer: <strong>${escapeHtml(detail.order.customer.name)}</strong></p>
+      <p>Sales rep: <strong>${escapeHtml(detail.order.currentSalesRep?.name ?? "-")}</strong></p>
+      <p>Imported at: <strong>${escapeHtml(new Date(detail.order.importedAt).toLocaleString())}</strong></p>
+    </div>
+    <div class="card">
+      <h2>Products (${detail.products.length})</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Unit price</th>
+            <th>Quantity</th>
+            <th>Line total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml || '<tr><td colspan="4">No product lines in this order.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    orderWindow.document.open();
+    orderWindow.document.write(fullHtml);
+    orderWindow.document.close();
   };
 
   const loadCategories = async (accessToken: string) => {
@@ -515,6 +730,7 @@ function App() {
 
       const body = (await response.json()) as DashboardResponse;
       setDashboard(body);
+      setDashboardSalesRepFilterIds([]);
       setDashboardMessage("Dashboard loaded.");
     } catch {
       setDashboard(null);
@@ -627,15 +843,14 @@ function App() {
     }
   };
 
-  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const loginWithCredentials = async (loginEmail: string, loginPassword: string) => {
     setAuthMessage("Logging in...");
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email: loginEmail, password: loginPassword })
       });
 
       if (!response.ok) {
@@ -665,6 +880,79 @@ function App() {
     }
   };
 
+  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await loginWithCredentials(email, password);
+  };
+
+  const handleQuickLoginAsDevUser = async (devUser: DevUser) => {
+    setEmail(devUser.email);
+    setPassword(devUser.password);
+    await loginWithCredentials(devUser.email, devUser.password);
+  };
+
+  const handleUpsertDevUser = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!newDevUserEmail.trim() || !newDevUserName.trim() || !newDevUserPassword.trim()) {
+      setDevUsersMessage("Email, name and password are required.");
+      return;
+    }
+
+    setDevBusyEmail(newDevUserEmail.trim().toLowerCase());
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/dev-users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: newDevUserEmail.trim().toLowerCase(),
+          name: newDevUserName.trim(),
+          role: newDevUserRole,
+          password: newDevUserPassword
+        })
+      });
+
+      const body = (await response.json().catch(() => null)) as { users?: DevUser[]; message?: string } | null;
+      if (!response.ok || !body?.users) {
+        setDevUsersMessage(body?.message ?? `Saving dev user failed (${response.status}).`);
+        return;
+      }
+
+      setDevUsers(body.users);
+      setDevUsersMessage(body.message ?? "Dev user saved.");
+      setNewDevUserEmail("");
+      setNewDevUserName("");
+      setNewDevUserRole("sales_rep");
+      setNewDevUserPassword("");
+    } catch {
+      setDevUsersMessage("Saving dev user failed.");
+    } finally {
+      setDevBusyEmail(null);
+    }
+  };
+
+  const handleDeleteDevUser = async (targetEmail: string) => {
+    setDevBusyEmail(targetEmail);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/dev-users/${encodeURIComponent(targetEmail)}`, {
+        method: "DELETE"
+      });
+
+      const body = (await response.json().catch(() => null)) as { users?: DevUser[]; message?: string } | null;
+      if (!response.ok || !body?.users) {
+        setDevUsersMessage(body?.message ?? `Deleting dev user failed (${response.status}).`);
+        return;
+      }
+
+      setDevUsers(body.users);
+      setDevUsersMessage(body.message ?? "Dev user deleted.");
+    } catch {
+      setDevUsersMessage("Deleting dev user failed.");
+    } finally {
+      setDevBusyEmail(null);
+    }
+  };
+
   const handleLogout = () => {
     setToken(null);
     setUser(null);
@@ -672,12 +960,12 @@ function App() {
     setContacts([]);
     setProducts([]);
     setOrders([]);
-    setExpandedOrderIds({});
     setOrderDetailsById({});
     setOrderDetailLoadingById({});
     setCategories([]);
     setTopProducts([]);
     setDashboard(null);
+    setDashboardSalesRepFilterIds([]);
   };
 
   if (!isLoggedIn) {
@@ -712,6 +1000,87 @@ function App() {
           </form>
 
           <p className="message">{authMessage}</p>
+
+          <section className="dev-users-section" aria-label="development users manager">
+            <div className="dev-users-head">
+              <h2>Development Users</h2>
+              <button type="button" onClick={() => loadDevUsers()} disabled={devUsersLoading}>
+                {devUsersLoading ? "Refreshing..." : "Refresh list"}
+              </button>
+            </div>
+            <p className="hint">{devUsersMessage}</p>
+
+            <form className="form" onSubmit={handleUpsertDevUser}>
+              <label>
+                New user email
+                <input value={newDevUserEmail} onChange={(e) => setNewDevUserEmail(e.target.value)} />
+              </label>
+              <label>
+                New user name
+                <input value={newDevUserName} onChange={(e) => setNewDevUserName(e.target.value)} />
+              </label>
+              <label>
+                Role
+                <select value={newDevUserRole} onChange={(e) => setNewDevUserRole(e.target.value as UserRole)}>
+                  <option value="sales_rep">sales_rep</option>
+                  <option value="admin">admin</option>
+                </select>
+              </label>
+              <label>
+                Password
+                <input value={newDevUserPassword} onChange={(e) => setNewDevUserPassword(e.target.value)} />
+              </label>
+              <button type="submit" disabled={Boolean(devBusyEmail)}>
+                Save dev user
+              </button>
+            </form>
+
+            <div className="customer-list">
+              {devUsers.map((devUser) => {
+                const isBusy = devBusyEmail === devUser.email;
+                return (
+                  <article className="customer-card" key={devUser.email}>
+                    <h3>{devUser.name}</h3>
+                    <p>
+                      <strong>{devUser.email}</strong>
+                    </p>
+                    <p>
+                      Role: <strong>{devUser.role}</strong>
+                    </p>
+                    <p>
+                      Password: <strong>{devUser.password}</strong>
+                    </p>
+                    <div className="actions">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEmail(devUser.email);
+                          setPassword(devUser.password);
+                        }}
+                        disabled={isBusy}
+                      >
+                        Use credentials
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setDevBusyEmail(devUser.email);
+                          await handleQuickLoginAsDevUser(devUser);
+                          setDevBusyEmail(null);
+                        }}
+                        disabled={isBusy}
+                      >
+                        Login as this user
+                      </button>
+                      <button type="button" onClick={() => handleDeleteDevUser(devUser.email)} disabled={isBusy}>
+                        Delete user
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
         </section>
       </main>
     );
@@ -933,8 +1302,6 @@ function App() {
                 <h2>Order list ({orders.length})</h2>
                 <div className="customer-list">
                   {orders.map((order) => {
-                    const isExpanded = expandedOrderIds[order.id] ?? false;
-                    const detail = orderDetailsById[order.id];
                     const detailLoading = orderDetailLoadingById[order.id] ?? false;
 
                     return (
@@ -948,35 +1315,9 @@ function App() {
                         <p>
                           Product: <strong>{order.totals.productNetCzk}</strong> | Total: <strong>{order.totals.allNetCzk}</strong> CZK
                         </p>
-                        <button type="button" onClick={() => handleToggleOrderExpand(order.id)}>
-                          {isExpanded ? "Hide products" : "Show products"}
+                        <button type="button" onClick={() => handleOpenOrderWindow(order)} disabled={detailLoading}>
+                          {detailLoading ? "Opening..." : "Open in new window"}
                         </button>
-
-                        {isExpanded && (
-                          <section className="order-detail">
-                            {detailLoading && <p>Loading product lines...</p>}
-                            {!detailLoading && !detail && <p>Order detail not loaded.</p>}
-                            {!detailLoading && detail && detail.products.length === 0 && <p>No product lines in this order.</p>}
-                            {!detailLoading && detail && detail.products.length > 0 && (
-                              <div className="customer-list">
-                                {detail.products.map((line) => (
-                                  <article className="customer-card order-line" key={line.orderItemId}>
-                                    <h4>
-                                      {line.productName} {line.sku ? `(${line.sku})` : ""}
-                                    </h4>
-                                    <p>
-                                      Unit price: <strong>{formatMoneyOrDash(line.unitPriceFromProductNetCzk)}</strong> | Quantity:{" "}
-                                      <strong>{line.quantity}</strong>
-                                    </p>
-                                    <p>
-                                      Line total: <strong>{formatMoneyOrDash(line.lineTotalNetCzk)}</strong>
-                                    </p>
-                                  </article>
-                                ))}
-                              </div>
-                            )}
-                          </section>
-                        )}
                       </article>
                     );
                   })}
@@ -1124,10 +1465,38 @@ function App() {
             <div className="workspace-grid">
               <article className="panel">
                 <h2>Dashboard controls</h2>
+                <p className="hint">Filter by salesmen (multi-select)</p>
+                <div className="multi-checklist">
+                  {dashboardSalesRepOptions.map((rep) => (
+                    <label key={rep.id} className="inline-check">
+                      <input
+                        type="checkbox"
+                        checked={dashboardSalesRepFilterIds.includes(rep.id)}
+                        onChange={(event) => {
+                          setDashboardSalesRepFilterIds((prev) => {
+                            if (event.target.checked) {
+                              return [...prev, rep.id];
+                            }
+                            return prev.filter((id) => id !== rep.id);
+                          });
+                        }}
+                      />
+                      {rep.name}
+                    </label>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDashboardSalesRepFilterIds([])}
+                  disabled={dashboardSalesRepFilterIds.length === 0}
+                >
+                  Clear salesman filter
+                </button>
                 <button type="button" onClick={() => token && loadDashboard(token)} disabled={dashboardLoading}>
                   {dashboardLoading ? "Loading..." : "Refresh dashboard"}
                 </button>
                 <p className="message">{dashboardMessage}</p>
+                <p className="hint">Current filter: {dashboardSelectedRepNames}</p>
                 {dashboard && (
                   <article className="customer-card">
                     <p>
@@ -1145,68 +1514,24 @@ function App() {
 
               <article className="panel">
                 <h2>Category share on sales</h2>
-                <details open>
-                  <summary>Total</summary>
-                  <ul className="history-list">
-                    {dashboard?.categoryShareTotal.map((item) => (
-                      <li key={item.category}>
-                        {item.category}: {item.turnoverNetCzk} CZK ({item.sharePct}%)
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-
-                <details>
-                  <summary>By salesmen</summary>
-                  <div className="customer-list">
-                    {dashboard?.categoryShareBySalesRep.map((rep) => (
-                      <article className="customer-card" key={rep.salesRepId}>
-                        <h3>{rep.salesRepName}</h3>
-                        <p>Total: {rep.totalTurnoverNetCzk} CZK</p>
-                        <ul className="history-list">
-                          {rep.categories.map((item) => (
-                            <li key={`${rep.salesRepId}-${item.category}`}>
-                              {item.category}: {item.turnoverNetCzk} CZK ({item.sharePct}%)
-                            </li>
-                          ))}
-                        </ul>
-                      </article>
-                    ))}
-                  </div>
-                </details>
+                <ul className="history-list">
+                  {categoryShareView.map((item) => (
+                    <li key={item.category}>
+                      {item.category}: {item.turnoverNetCzk} CZK ({item.sharePct}%)
+                    </li>
+                  ))}
+                </ul>
               </article>
 
               <article className="panel">
                 <h2>Sales of TOP products</h2>
-                <details open>
-                  <summary>Total</summary>
-                  <ul className="history-list">
-                    {dashboard?.topProductSalesTotal.map((item) => (
-                      <li key={item.topProductId}>
-                        {item.topProductName}: {item.turnoverNetCzk} CZK ({item.sharePct}%)
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-
-                <details>
-                  <summary>By salesmen</summary>
-                  <div className="customer-list">
-                    {dashboard?.topProductSalesBySalesRep.map((rep) => (
-                      <article className="customer-card" key={rep.salesRepId}>
-                        <h3>{rep.salesRepName}</h3>
-                        <p>TOP total: {rep.totalTopProductTurnoverNetCzk} CZK</p>
-                        <ul className="history-list">
-                          {rep.products.map((item) => (
-                            <li key={`${rep.salesRepId}-${item.topProductId}`}>
-                              {item.topProductName}: {item.turnoverNetCzk} CZK ({item.sharePct}%)
-                            </li>
-                          ))}
-                        </ul>
-                      </article>
-                    ))}
-                  </div>
-                </details>
+                <ul className="history-list">
+                  {topProductSalesView.map((item) => (
+                    <li key={item.topProductId}>
+                      {item.topProductName}: {item.turnoverNetCzk} CZK ({item.sharePct}%)
+                    </li>
+                  ))}
+                </ul>
               </article>
             </div>
           )}

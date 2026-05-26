@@ -9,6 +9,7 @@ import { customersRouter } from "./routes/customers";
 import { recommendationsRouter } from "./routes/recommendations";
 import { crmRouter } from "./routes/crm";
 import { workspaceRouter } from "./routes/workspace";
+import { logDevUsersFileReminder } from "./lib/dev-users";
 
 const app = express();
 const allowedOrigins = env.CORS_ORIGIN.split(",").map((origin) => origin.trim());
@@ -47,6 +48,7 @@ app.get("/", (_req, res) => {
       health: "/api/health",
       db: "/api/health/db",
       login: "POST /api/auth/login",
+      devUsers: "GET/POST/DELETE /api/auth/dev-users",
       adminCustomers: "GET /api/admin/customers",
       adminXmlImport: "POST /api/admin/imports/orders/xml",
       adminImportHistory: "GET /api/admin/imports",
@@ -72,6 +74,8 @@ app.get("/", (_req, res) => {
     }
   });
 });
+
+logDevUsersFileReminder();
 
 app.listen(env.PORT, () => {
   console.log(`Backend listening on http://localhost:${env.PORT}`);
