@@ -325,6 +325,16 @@ button:disabled {
   margin: 0 0 0.45rem;
 }
 
+.inline-link-btn {
+  background: transparent;
+  color: #1d62da;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
 .assign-row {
   display: grid;
   grid-template-columns: 1fr auto;

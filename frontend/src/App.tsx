@@ -162,6 +162,10 @@ type ContactDetailResponse = {
   }>;
 };
 
+type CrmWindowWithOrderOpener = Window & {
+  crmOpenOrderWindowById?: (orderDbId: number) => void;
+};
+
 type CategoryRow = {
   id: number;
   name: string;
@@ -230,13 +234,16 @@ function App() {
   const formatNumberOrDash = (value: number | null) => (value === null ? "-" : value.toString());
   const moneyToNumber = (value: string) => Number.parseFloat(value);
   const formatMoney = (value: number) => value.toFixed(2);
-  const escapeHtml = (value: string) =>
-    value
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
+  const escapeHtml = useCallback(
+    (value: string) =>
+      value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;"),
+    []
+  );
 
   const [email, setEmail] = useState("admin@crm.local");
   const [password, setPassword] = useState("Admin123!");
@@ -577,7 +584,8 @@ function App() {
 
     const ordersRowsHtml = detail.orders
       .map((order) => {
-        return `<tr><td>${escapeHtml(order.orderId)}</td><td>${escapeHtml(order.status)}</td><td>${escapeHtml(new Date(order.importedAt).toLocaleString())}</td><td>${escapeHtml(order.totals.productNetCzk)}</td><td>${escapeHtml(order.totals.allNetCzk)}</td><td>${order.totals.lineCount}</td></tr>`;
+        const clickScript = `if (window.opener && typeof window.opener.crmOpenOrderWindowById === 'function') { window.opener.crmOpenOrderWindowById(${order.id}); } else { alert('Main CRM window is not available.'); } return false;`;
+        return `<tr><td><a href="#" onclick="${clickScript}">${escapeHtml(order.orderId)}</a></td><td>${escapeHtml(order.status)}</td><td>${escapeHtml(new Date(order.importedAt).toLocaleString())}</td><td>${escapeHtml(order.totals.productNetCzk)}</td><td>${escapeHtml(order.totals.allNetCzk)}</td><td>${order.totals.lineCount}</td><td><button onclick="${clickScript}">Open</button></td></tr>`;
       })
       .join("");
 
@@ -644,10 +652,11 @@ function App() {
             <th>Product CZK</th>
             <th>Total CZK</th>
             <th>Lines</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
-          ${ordersRowsHtml || '<tr><td colspan="6">No orders.</td></tr>'}
+          ${ordersRowsHtml || '<tr><td colspan="7">No orders.</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -884,7 +893,7 @@ function App() {
     }
   };
 
-  const loadOrderDetail = async (accessToken: string, orderDbId: number): Promise<OrderDetailResponse | null> => {
+  const loadOrderDetail = useCallback(async (accessToken: string, orderDbId: number): Promise<OrderDetailResponse | null> => {
     setOrderDetailLoadingById((prev) => ({ ...prev, [orderDbId]: true }));
     try {
       const response = await fetch(`${API_BASE_URL}/api/workspace/orders/${orderDbId}`, {
@@ -908,34 +917,9 @@ function App() {
     } finally {
       setOrderDetailLoadingById((prev) => ({ ...prev, [orderDbId]: false }));
     }
-  };
+  }, []);
 
-  const handleOpenOrderWindow = async (order: OrderRow) => {
-    if (!token) {
-      return;
-    }
-
-    const orderWindow = window.open("", "_blank", "width=1080,height=760");
-    if (!orderWindow) {
-      setOrderMessage("Popup blocked. Please allow popups for this app.");
-      return;
-    }
-
-    const loadingHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Order ${escapeHtml(order.orderId)}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Loading order ${escapeHtml(order.orderId)}...</h2></body></html>`;
-    orderWindow.document.open();
-    orderWindow.document.write(loadingHtml);
-    orderWindow.document.close();
-
-    const detail = orderDetailsById[order.id] ?? (await loadOrderDetail(token, order.id));
-
-    if (!detail) {
-      const failHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Order ${escapeHtml(order.orderId)}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Order detail is not available.</h2><p>Please close this window and try again.</p></body></html>`;
-      orderWindow.document.open();
-      orderWindow.document.write(failHtml);
-      orderWindow.document.close();
-      return;
-    }
-
+  const buildOrderWindowHtml = useCallback((detail: OrderDetailResponse): string => {
     const rowsHtml = detail.products
       .map((line) => {
         const productName = escapeHtml(line.productName);
@@ -947,7 +931,7 @@ function App() {
       })
       .join("");
 
-    const fullHtml = `<!doctype html>
+    return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -992,11 +976,55 @@ function App() {
   </div>
 </body>
 </html>`;
+  }, [escapeHtml]);
 
+  const handleOpenOrderWindowById = useCallback(async (orderDbId: number, orderLabel?: string) => {
+    if (!token) {
+      return;
+    }
+
+    const orderWindow = window.open("", "_blank", "width=1080,height=760");
+    if (!orderWindow) {
+      setOrderMessage("Popup blocked. Please allow popups for this app.");
+      return;
+    }
+
+    const orderLabelSafe = escapeHtml(orderLabel ?? `#${orderDbId}`);
+    const loadingHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Order ${orderLabelSafe}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Loading order ${orderLabelSafe}...</h2></body></html>`;
+    orderWindow.document.open();
+    orderWindow.document.write(loadingHtml);
+    orderWindow.document.close();
+
+    const detail = orderDetailsById[orderDbId] ?? (await loadOrderDetail(token, orderDbId));
+
+    if (!detail) {
+      const failHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Order ${orderLabelSafe}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Order detail is not available.</h2><p>Please close this window and try again.</p></body></html>`;
+      orderWindow.document.open();
+      orderWindow.document.write(failHtml);
+      orderWindow.document.close();
+      return;
+    }
+
+    const fullHtml = buildOrderWindowHtml(detail);
     orderWindow.document.open();
     orderWindow.document.write(fullHtml);
     orderWindow.document.close();
+  }, [buildOrderWindowHtml, escapeHtml, loadOrderDetail, orderDetailsById, token]);
+
+  const handleOpenOrderWindow = async (order: OrderRow) => {
+    await handleOpenOrderWindowById(order.id, order.orderId);
   };
+
+  useEffect(() => {
+    const hostWindow = window as CrmWindowWithOrderOpener;
+    hostWindow.crmOpenOrderWindowById = (orderDbId: number) => {
+      void handleOpenOrderWindowById(orderDbId);
+    };
+
+    return () => {
+      delete hostWindow.crmOpenOrderWindowById;
+    };
+  }, [handleOpenOrderWindowById]);
 
   const loadCategories = async (accessToken: string) => {
     setCategoriesLoading(true);
@@ -1677,7 +1705,15 @@ function App() {
                     return (
                       <article className="customer-card" key={order.id}>
                         <h3>
-                          {order.orderId} | {order.status}
+                          <button
+                            type="button"
+                            className="inline-link-btn"
+                            onClick={() => handleOpenOrderWindow(order)}
+                            disabled={detailLoading}
+                          >
+                            {order.orderId}
+                          </button>{" "}
+                          | {order.status}
                         </h3>
                         <p>
                           Customer: <strong>{order.customer.name}</strong> | Rep: <strong>{order.currentSalesRep?.name ?? "-"}</strong>
