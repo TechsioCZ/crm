@@ -98,6 +98,70 @@ type OrderDetailResponse = {
   }>;
 };
 
+type ContactDetailResponse = {
+  customer: {
+    id: number;
+    name: string;
+    createdAt: string;
+    currentSalesRep: SalesRepOption | null;
+    assignmentHistory: Array<{
+      id: number;
+      salesRepId: number;
+      startedAt: string;
+      endedAt: string | null;
+      salesRep: SalesRepOption;
+      assignedBy: {
+        id: number;
+        name: string;
+        email: string;
+      } | null;
+    }>;
+    summary: {
+      ordersCount: number;
+      notesCount: number;
+      tasksCount: number;
+    };
+  };
+  orders: Array<{
+    id: number;
+    orderId: string;
+    status: string;
+    importedAt: string;
+    totals: {
+      lineCount: number;
+      productNetCzk: string;
+      shippingNetCzk: string;
+      paymentNetCzk: string;
+      otherNetCzk: string;
+      allNetCzk: string;
+    };
+  }>;
+  notes: Array<{
+    id: number;
+    text: string;
+    createdAt: string;
+    author: {
+      id: number;
+      name: string;
+      email: string;
+    };
+  }>;
+  tasks: Array<{
+    id: number;
+    description: string;
+    dueDate: string;
+    priority: string;
+    status: string;
+    completedAt: string | null;
+    createdAt: string;
+    owner: {
+      id: number;
+      name: string;
+      email: string;
+    };
+  }>;
+};
+
 type CategoryRow = {
   id: number;
   name: string;
@@ -212,6 +276,7 @@ function App() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [orderIdFilter, setOrderIdFilter] = useState("");
   const [orderStatusFilter, setOrderStatusFilter] = useState("");
+  const [orderStatusOptions, setOrderStatusOptions] = useState<string[]>([]);
   const [orderCustomerFilter, setOrderCustomerFilter] = useState("");
   const [orderSalesRepFilter, setOrderSalesRepFilter] = useState("");
   const [orderDateFromFilter, setOrderDateFromFilter] = useState("");
@@ -220,6 +285,7 @@ function App() {
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [orderDetailsById, setOrderDetailsById] = useState<Record<number, OrderDetailResponse>>({});
   const [orderDetailLoadingById, setOrderDetailLoadingById] = useState<Record<number, boolean>>({});
+  const [contactDetailLoadingById, setContactDetailLoadingById] = useState<Record<number, boolean>>({});
 
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -411,9 +477,11 @@ function App() {
       const body = (await response.json()) as {
         salesReps: SalesRepOption[];
         categories: Array<{ id: number; name: string }>;
+        orderStatuses: string[];
       };
       setSalesReps(body.salesReps);
       setCategoryNames(body.categories.map((item) => item.name));
+      setOrderStatusOptions(body.orderStatuses);
     } catch {
       // silent
     }
@@ -450,6 +518,285 @@ function App() {
       setContactMessage("Contact list request failed.");
     } finally {
       setContactsLoading(false);
+    }
+  };
+
+  const loadContactDetail = async (accessToken: string, customerId: number): Promise<ContactDetailResponse | null> => {
+    setContactDetailLoadingById((prev) => ({ ...prev, [customerId]: true }));
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/workspace/contacts/${customerId}/detail`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      if (!response.ok) {
+        setContactMessage(`Contact detail failed (${response.status}) for customer ${customerId}.`);
+        return null;
+      }
+
+      return (await response.json()) as ContactDetailResponse;
+    } catch {
+      setContactMessage(`Contact detail request failed for customer ${customerId}.`);
+      return null;
+    } finally {
+      setContactDetailLoadingById((prev) => ({ ...prev, [customerId]: false }));
+    }
+  };
+
+  const handleOpenContactWindow = async (contact: ContactRow) => {
+    if (!token) {
+      return;
+    }
+
+    const contactWindow = window.open("", "_blank", "width=1180,height=820");
+    if (!contactWindow) {
+      setContactMessage("Popup blocked. Please allow popups for this app.");
+      return;
+    }
+
+    const loadingHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Client ${escapeHtml(contact.name)}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Loading client ${escapeHtml(contact.name)}...</h2></body></html>`;
+    contactWindow.document.open();
+    contactWindow.document.write(loadingHtml);
+    contactWindow.document.close();
+
+    const detail = await loadContactDetail(token, contact.id);
+    if (!detail) {
+      const failHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Client ${escapeHtml(contact.name)}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Client detail is not available.</h2><p>Please close this window and try again.</p></body></html>`;
+      contactWindow.document.open();
+      contactWindow.document.write(failHtml);
+      contactWindow.document.close();
+      return;
+    }
+
+    const assignmentRowsHtml = detail.customer.assignmentHistory
+      .map((assignment) => {
+        const assignedBy = assignment.assignedBy?.name ?? "-";
+        const endedAt = assignment.endedAt ? new Date(assignment.endedAt).toLocaleString() : "active";
+        return `<tr><td>${escapeHtml(assignment.salesRep.name)}</td><td>${escapeHtml(new Date(assignment.startedAt).toLocaleString())}</td><td>${escapeHtml(endedAt)}</td><td>${escapeHtml(assignedBy)}</td></tr>`;
+      })
+      .join("");
+
+    const ordersRowsHtml = detail.orders
+      .map((order) => {
+        return `<tr><td>${escapeHtml(order.orderId)}</td><td>${escapeHtml(order.status)}</td><td>${escapeHtml(new Date(order.importedAt).toLocaleString())}</td><td>${escapeHtml(order.totals.productNetCzk)}</td><td>${escapeHtml(order.totals.allNetCzk)}</td><td>${order.totals.lineCount}</td></tr>`;
+      })
+      .join("");
+
+    const notesRowsHtml = detail.notes
+      .map((note) => {
+        return `<tr><td>${escapeHtml(new Date(note.createdAt).toLocaleString())}</td><td>${escapeHtml(note.author.name)}</td><td>${escapeHtml(note.text)}</td></tr>`;
+      })
+      .join("");
+
+    const tasksRowsHtml = detail.tasks
+      .map((task) => {
+        const doneAt = task.completedAt ? new Date(task.completedAt).toLocaleString() : "-";
+        return `<tr><td>${escapeHtml(task.dueDate.slice(0, 10))}</td><td>${escapeHtml(task.priority)}</td><td>${escapeHtml(task.status)}</td><td>${escapeHtml(task.owner.name)}</td><td>${escapeHtml(task.description)}</td><td>${escapeHtml(doneAt)}</td></tr>`;
+      })
+      .join("");
+
+    const fullHtml = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Client ${escapeHtml(detail.customer.name)}</title>
+  <style>
+    body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#eef2f7;color:#1d2a3a}
+    .wrap{max-width:1200px;margin:0 auto;padding:24px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(280px,1fr));gap:12px}
+    .card{background:#fff;border:1px solid #d6dbe7;border-radius:12px;padding:16px;margin-bottom:12px}
+    h1{margin:0 0 8px;font-size:30px}
+    h2{margin:0 0 10px;font-size:20px}
+    p{margin:4px 0}
+    table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #d6dbe7;padding:8px;text-align:left;vertical-align:top}
+    th{background:#f8f9fc}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>${escapeHtml(detail.customer.name)}</h1>
+      <p>Customer id: <strong>${detail.customer.id}</strong></p>
+      <p>Current sales rep: <strong>${escapeHtml(detail.customer.currentSalesRep?.name ?? "Unassigned")}</strong></p>
+      <p>Created at: <strong>${escapeHtml(new Date(detail.customer.createdAt).toLocaleString())}</strong></p>
+    </div>
+
+    <div class="card grid">
+      <div>
+        <p>Orders: <strong>${detail.customer.summary.ordersCount}</strong></p>
+      </div>
+      <div>
+        <p>Notes: <strong>${detail.customer.summary.notesCount}</strong></p>
+      </div>
+      <div>
+        <p>Tasks: <strong>${detail.customer.summary.tasksCount}</strong></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Orders (${detail.orders.length})</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Order ID</th>
+            <th>Status</th>
+            <th>Imported at</th>
+            <th>Product CZK</th>
+            <th>Total CZK</th>
+            <th>Lines</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${ordersRowsHtml || '<tr><td colspan="6">No orders.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Assignment history (${detail.customer.assignmentHistory.length})</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Sales rep</th>
+            <th>Started</th>
+            <th>Ended</th>
+            <th>Assigned by</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${assignmentRowsHtml || '<tr><td colspan="4">No assignments.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Notes (${detail.notes.length})</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Created</th>
+            <th>Author</th>
+            <th>Text</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${notesRowsHtml || '<tr><td colspan="3">No notes.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Tasks (${detail.tasks.length})</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Due date</th>
+            <th>Priority</th>
+            <th>Status</th>
+            <th>Owner</th>
+            <th>Description</th>
+            <th>Completed</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tasksRowsHtml || '<tr><td colspan="6">No tasks.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    contactWindow.document.open();
+    contactWindow.document.write(fullHtml);
+    contactWindow.document.close();
+  };
+
+  const handleOpenCategoryWindow = async (categoryName: string) => {
+    if (!token) {
+      return;
+    }
+
+    const categoryWindow = window.open("", "_blank", "width=1080,height=760");
+    if (!categoryWindow) {
+      setCategoriesMessage("Popup blocked. Please allow popups for this app.");
+      return;
+    }
+
+    const loadingHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Category ${escapeHtml(categoryName)}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Loading category ${escapeHtml(categoryName)}...</h2></body></html>`;
+    categoryWindow.document.open();
+    categoryWindow.document.write(loadingHtml);
+    categoryWindow.document.close();
+
+    try {
+      const query = new URLSearchParams();
+      query.set("category", categoryName);
+      query.set("limit", "500");
+
+      const response = await fetch(`${API_BASE_URL}/api/workspace/products?${query.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (!response.ok) {
+        setCategoriesMessage(`Category products failed (${response.status}).`);
+        const failHtml = `<!doctype html><html><head><meta charset="utf-8"><title>Category ${escapeHtml(categoryName)}</title></head><body style="font-family:Segoe UI,Arial,sans-serif;padding:24px;background:#f6f8fc;color:#1f2937"><h2>Category products are not available.</h2><p>Please close this window and try again.</p></body></html>`;
+        categoryWindow.document.open();
+        categoryWindow.document.write(failHtml);
+        categoryWindow.document.close();
+        return;
+      }
+
+      const body = (await response.json()) as { products: ProductRow[]; summary: { count: number } };
+      const rowsHtml = body.products
+        .map((product) => {
+          return `<tr><td>${escapeHtml(product.name)}</td><td>${escapeHtml(product.sku ?? "-")}</td><td>${escapeHtml(product.categoryName ?? "-")}</td><td>${escapeHtml(product.turnoverNetCzk)}</td><td>${escapeHtml(formatMoneyOrDash(product.unitPriceNetCzk))}</td><td>${escapeHtml(String(product.isActive))}</td></tr>`;
+        })
+        .join("");
+
+      const fullHtml = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Category ${escapeHtml(categoryName)}</title>
+  <style>
+    body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#eef2f7;color:#1d2a3a}
+    .wrap{max-width:1100px;margin:0 auto;padding:24px}
+    .card{background:#fff;border:1px solid #d6dbe7;border-radius:12px;padding:16px}
+    h1{margin:0 0 10px;font-size:28px}
+    table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid #d6dbe7;padding:8px;text-align:left;vertical-align:top}
+    th{background:#f8f9fc}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Category: ${escapeHtml(categoryName)} (${body.summary.count} products)</h1>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>SKU</th>
+            <th>Category</th>
+            <th>Sales CZK</th>
+            <th>Unit price</th>
+            <th>In TOP list</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml || '<tr><td colspan="6">No products in this category.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>`;
+
+      categoryWindow.document.open();
+      categoryWindow.document.write(fullHtml);
+      categoryWindow.document.close();
+    } catch {
+      setCategoriesMessage("Category products request failed.");
     }
   };
 
@@ -832,14 +1179,19 @@ function App() {
 
       const body = (await response.json().catch(() => null)) as { message?: string } | null;
       if (!response.ok) {
-        setTopProductsMessage(body?.message ?? `Update top product failed (${response.status}).`);
+        const failMessage = body?.message ?? `Update top product failed (${response.status}).`;
+        setTopProductsMessage(failMessage);
+        setProductMessage(failMessage);
         return;
       }
 
-      setTopProductsMessage("Top product updated.");
-      await loadTopProducts(token);
+      const actionMessage = isActive ? "Product removed from TOP list." : "Product added to TOP list.";
+      setTopProductsMessage(actionMessage);
+      setProductMessage(actionMessage);
+      await Promise.all([loadTopProducts(token), loadProducts(token), loadCategories(token)]);
     } catch {
       setTopProductsMessage("Update top product request failed.");
+      setProductMessage("Update top product request failed.");
     }
   };
 
@@ -960,8 +1312,10 @@ function App() {
     setContacts([]);
     setProducts([]);
     setOrders([]);
+    setOrderStatusOptions([]);
     setOrderDetailsById({});
     setOrderDetailLoadingById({});
+    setContactDetailLoadingById({});
     setCategories([]);
     setTopProducts([]);
     setDashboard(null);
@@ -1179,18 +1533,24 @@ function App() {
               <article className="panel">
                 <h2>Contact list ({contacts.length})</h2>
                 <div className="customer-list">
-                  {contacts.map((contact) => (
-                    <article className="customer-card" key={contact.id}>
-                      <h3>{contact.name}</h3>
-                      <p>
-                        Sales rep: <strong>{contact.currentSalesRep?.name ?? "Unassigned"}</strong>
-                      </p>
-                      <p>
-                        Orders: <strong>{contact.ordersCount}</strong> | Notes: <strong>{contact.notesCount}</strong> | Tasks:{" "}
-                        <strong>{contact.tasksCount}</strong>
-                      </p>
-                    </article>
-                  ))}
+                  {contacts.map((contact) => {
+                    const detailLoading = contactDetailLoadingById[contact.id] ?? false;
+                    return (
+                      <article className="customer-card" key={contact.id}>
+                        <h3>{contact.name}</h3>
+                        <p>
+                          Sales rep: <strong>{contact.currentSalesRep?.name ?? "Unassigned"}</strong>
+                        </p>
+                        <p>
+                          Orders: <strong>{contact.ordersCount}</strong> | Notes: <strong>{contact.notesCount}</strong> | Tasks:{" "}
+                          <strong>{contact.tasksCount}</strong>
+                        </p>
+                        <button type="button" onClick={() => handleOpenContactWindow(contact)} disabled={detailLoading}>
+                          {detailLoading ? "Opening..." : "Open client detail"}
+                        </button>
+                      </article>
+                    );
+                  })}
                 </div>
               </article>
             </div>
@@ -1248,6 +1608,9 @@ function App() {
                         <strong>{formatNumberOrDash(product.historicalSalesQty)}</strong> | Incoming:{" "}
                         <strong>{formatNumberOrDash(product.incomingFromSupplierQty)}</strong>
                       </p>
+                      <button type="button" onClick={() => handleToggleTopProduct(product.id, product.isActive)}>
+                        {product.isActive ? "Remove from TOP list" : "Add to TOP list"}
+                      </button>
                     </article>
                   ))}
                 </div>
@@ -1265,7 +1628,14 @@ function App() {
                 </label>
                 <label>
                   Status
-                  <input value={orderStatusFilter} onChange={(e) => setOrderStatusFilter(e.target.value)} />
+                  <select value={orderStatusFilter} onChange={(e) => setOrderStatusFilter(e.target.value)}>
+                    <option value="">All</option>
+                    {orderStatusOptions.map((status) => (
+                      <option key={status} value={status}>
+                        {status}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   Customer name
@@ -1364,6 +1734,9 @@ function App() {
                         TOP products: <strong>{category.topProductsActive}</strong> active / <strong>{category.topProductsTotal}</strong>{" "}
                         total
                       </p>
+                      <button type="button" onClick={() => handleOpenCategoryWindow(category.name)}>
+                        Open products in category
+                      </button>
                     </article>
                   ))}
                 </div>
@@ -1449,11 +1822,6 @@ function App() {
                         <strong>{formatNumberOrDash(item.historicalSalesQty)}</strong> | Incoming:{" "}
                         <strong>{formatNumberOrDash(item.incomingFromSupplierQty)}</strong>
                       </p>
-                      {isAdmin && (
-                        <button type="button" onClick={() => handleToggleTopProduct(item.id, item.isActive)}>
-                          Set active = {String(!item.isActive)}
-                        </button>
-                      )}
                     </article>
                   ))}
                 </div>

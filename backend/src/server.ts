@@ -65,6 +65,7 @@ app.get("/", (_req, res) => {
       crmTurnoverTrend: "GET /api/crm/customers/:customerId/turnover-trend?from=YYYY-MM-DD&to=YYYY-MM-DD",
       workspaceMeta: "GET /api/workspace/meta",
       workspaceContacts: "GET /api/workspace/contacts",
+      workspaceContactDetail: "GET /api/workspace/contacts/:customerId/detail",
       workspaceProducts: "GET /api/workspace/products",
       workspaceOrders: "GET /api/workspace/orders",
       workspaceOrderDetail: "GET /api/workspace/orders/:orderDbId",

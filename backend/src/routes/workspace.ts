@@ -72,6 +72,10 @@ const topProductIdParamSchema = z.object({
   topProductId: z.coerce.number().int().positive()
 });
 
+const contactIdParamSchema = z.object({
+  customerId: z.coerce.number().int().positive()
+});
+
 const orderDbIdParamSchema = z.object({
   orderDbId: z.coerce.number().int().positive()
 });
@@ -162,28 +166,43 @@ workspaceRouter.use(requireAuth);
 workspaceRouter.get("/meta", async (req, res) => {
   const authUser = req.authUser!;
 
-  const salesReps = await prisma.user.findMany({
-    where: {
-      role: "sales_rep",
-      ...(authUser.role === "admin" ? {} : { id: authUser.userId })
-    },
-    orderBy: { name: "asc" },
-    select: {
-      id: true,
-      name: true,
-      email: true
-    }
-  });
+  const [salesReps, categories, orderStatusesRows] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        role: "sales_rep",
+        ...(authUser.role === "admin" ? {} : { id: authUser.userId })
+      },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        email: true
+      }
+    }),
+    prisma.catalogCategory.findMany({
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true
+      }
+    }),
+    prisma.order.findMany({
+      where: getOrderVisibilityWhere(authUser),
+      select: {
+        status: true
+      },
+      distinct: ["status"],
+      orderBy: {
+        status: "asc"
+      }
+    })
+  ]);
 
-  const categories = await prisma.catalogCategory.findMany({
-    orderBy: { name: "asc" },
-    select: {
-      id: true,
-      name: true
-    }
+  res.json({
+    salesReps,
+    categories,
+    orderStatuses: orderStatusesRows.map((row) => row.status)
   });
-
-  res.json({ salesReps, categories });
 });
 
 workspaceRouter.get("/contacts", async (req, res) => {
@@ -261,6 +280,168 @@ workspaceRouter.get("/contacts", async (req, res) => {
     summary: {
       count: customers.length
     }
+  });
+});
+
+workspaceRouter.get("/contacts/:customerId/detail", async (req, res) => {
+  const parsedParam = contactIdParamSchema.safeParse(req.params);
+  if (!parsedParam.success) {
+    res.status(400).json({ message: "Invalid customer id." });
+    return;
+  }
+
+  const authUser = req.authUser!;
+  const customerId = parsedParam.data.customerId;
+
+  const customer = await prisma.customer.findFirst({
+    where: {
+      AND: [getCustomerVisibilityWhere(authUser), { id: customerId }]
+    },
+    include: {
+      assignments: {
+        orderBy: { startedAt: "desc" },
+        include: {
+          salesRep: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          },
+          assignedBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          }
+        }
+      },
+      notes: {
+        orderBy: { createdAt: "desc" },
+        include: {
+          author: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          }
+        }
+      },
+      tasks: {
+        orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],
+        include: {
+          owner: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          }
+        }
+      },
+      orders: {
+        orderBy: [{ importedAt: "desc" }, { id: "desc" }]
+      },
+      _count: {
+        select: {
+          orders: true,
+          notes: true,
+          tasks: true
+        }
+      }
+    }
+  });
+
+  if (!customer) {
+    res.status(404).json({ message: "Customer not found." });
+    return;
+  }
+
+  const currentAssignment = customer.assignments.find((assignment) => assignment.endedAt === null) ?? null;
+  const orderIds = customer.orders.map((order) => order.id);
+  const totalsRows =
+    orderIds.length === 0
+      ? []
+      : await prisma.orderItem.groupBy({
+          by: ["orderDbId", "lineType"],
+          where: {
+            orderDbId: { in: orderIds }
+          },
+          _sum: {
+            lineNetCzk: true
+          },
+          _count: {
+            _all: true
+          }
+        });
+
+  const totalsMap = new Map<number, { product: number; shipping: number; payment: number; other: number; lines: number }>();
+  for (const row of totalsRows) {
+    const current = totalsMap.get(row.orderDbId) ?? { product: 0, shipping: 0, payment: 0, other: 0, lines: 0 };
+    const value = Number.parseFloat(row._sum.lineNetCzk?.toString() ?? "0");
+
+    if (row.lineType === "product") {
+      current.product += value;
+    } else if (row.lineType === "shipping") {
+      current.shipping += value;
+    } else if (row.lineType === "payment") {
+      current.payment += value;
+    } else {
+      current.other += value;
+    }
+
+    current.lines += row._count._all;
+    totalsMap.set(row.orderDbId, current);
+  }
+
+  res.json({
+    customer: {
+      id: customer.id,
+      name: customer.name,
+      createdAt: customer.createdAt,
+      currentSalesRep: currentAssignment?.salesRep ?? null,
+      assignmentHistory: customer.assignments,
+      summary: {
+        ordersCount: customer._count.orders,
+        notesCount: customer._count.notes,
+        tasksCount: customer._count.tasks
+      }
+    },
+    orders: customer.orders.map((order) => {
+      const totals = totalsMap.get(order.id) ?? { product: 0, shipping: 0, payment: 0, other: 0, lines: 0 };
+      return {
+        id: order.id,
+        orderId: order.orderId,
+        status: order.status,
+        importedAt: order.importedAt,
+        totals: {
+          lineCount: totals.lines,
+          productNetCzk: toMoneyString(totals.product),
+          shippingNetCzk: toMoneyString(totals.shipping),
+          paymentNetCzk: toMoneyString(totals.payment),
+          otherNetCzk: toMoneyString(totals.other),
+          allNetCzk: toMoneyString(totals.product + totals.shipping + totals.payment + totals.other)
+        }
+      };
+    }),
+    notes: customer.notes.map((note) => ({
+      id: note.id,
+      text: note.text,
+      createdAt: note.createdAt,
+      author: note.author
+    })),
+    tasks: customer.tasks.map((task) => ({
+      id: task.id,
+      description: task.description,
+      dueDate: task.dueDate,
+      priority: task.priority,
+      status: task.status,
+      completedAt: task.completedAt,
+      createdAt: task.createdAt,
+      owner: task.owner
+    }))
   });
 });
 
@@ -846,7 +1027,7 @@ workspaceRouter.post("/top-products", requireRole("admin"), async (req, res) => 
   }
 });
 
-workspaceRouter.patch("/top-products/:topProductId", requireRole("admin"), async (req, res) => {
+workspaceRouter.patch("/top-products/:topProductId", async (req, res) => {
   const paramParsed = topProductIdParamSchema.safeParse(req.params);
   if (!paramParsed.success) {
     res.status(400).json({ message: "Invalid top product id." });
