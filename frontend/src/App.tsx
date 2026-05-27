@@ -227,6 +227,15 @@ type DashboardResponse = {
   }>;
 };
 
+type DashboardComparisonSalesRep = {
+  salesRepId: number;
+  salesRepName: string;
+  categoryTotalTurnoverNetCzk: string;
+  topProductTotalTurnoverNetCzk: string;
+  categories: DashboardResponse["categoryShareBySalesRep"][number]["categories"];
+  products: DashboardResponse["topProductSalesBySalesRep"][number]["products"];
+};
+
 type ImportKind = "customers" | "products" | "orders";
 
 type ImportResponse = {
@@ -430,6 +439,9 @@ function App() {
   const [dashboardMessage, setDashboardMessage] = useState("Dashboard not loaded yet.");
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardSalesRepFilterIds, setDashboardSalesRepFilterIds] = useState<number[]>([]);
+  const [dashboardComparisonDialogOpen, setDashboardComparisonDialogOpen] = useState(false);
+  const [dashboardComparisonGroupAIds, setDashboardComparisonGroupAIds] = useState<number[]>([]);
+  const [dashboardComparisonGroupBIds, setDashboardComparisonGroupBIds] = useState<number[]>([]);
 
   const isLoggedIn = useMemo(() => Boolean(token), [token]);
   const isAdmin = user?.role === "admin";
@@ -521,6 +533,183 @@ function App() {
       }))
       .sort((left, right) => moneyToNumber(right.turnoverNetCzk) - moneyToNumber(left.turnoverNetCzk));
   }, [dashboard, dashboardSalesRepFilterIds]);
+
+  const orderDashboardSalesRepIds = useCallback(
+    (selectedSet: Set<number>) =>
+      dashboardSalesRepOptions
+        .filter((option) => selectedSet.has(option.id))
+        .map((option) => option.id),
+    [dashboardSalesRepOptions]
+  );
+
+  const dashboardComparisonRepById = useMemo(() => {
+    if (!dashboard) {
+      return new Map<number, DashboardComparisonSalesRep>();
+    }
+
+    const topProductByRepId = new Map(dashboard.topProductSalesBySalesRep.map((rep) => [rep.salesRepId, rep] as const));
+    return new Map<number, DashboardComparisonSalesRep>(
+      dashboard.categoryShareBySalesRep.map((rep) => {
+        const topProductRep = topProductByRepId.get(rep.salesRepId);
+        return [
+          rep.salesRepId,
+          {
+            salesRepId: rep.salesRepId,
+            salesRepName: rep.salesRepName,
+            categoryTotalTurnoverNetCzk: rep.totalTurnoverNetCzk,
+            topProductTotalTurnoverNetCzk: topProductRep?.totalTopProductTurnoverNetCzk ?? "0.00",
+            categories: rep.categories,
+            products: topProductRep?.products ?? []
+          }
+        ];
+      })
+    );
+  }, [dashboard]);
+
+  const dashboardComparisonGroupAReps = useMemo(
+    () =>
+      dashboardComparisonGroupAIds
+        .map((id) => dashboardComparisonRepById.get(id))
+        .filter((rep): rep is DashboardComparisonSalesRep => Boolean(rep)),
+    [dashboardComparisonGroupAIds, dashboardComparisonRepById]
+  );
+
+  const dashboardComparisonGroupBReps = useMemo(
+    () =>
+      dashboardComparisonGroupBIds
+        .map((id) => dashboardComparisonRepById.get(id))
+        .filter((rep): rep is DashboardComparisonSalesRep => Boolean(rep)),
+    [dashboardComparisonGroupBIds, dashboardComparisonRepById]
+  );
+
+  const dashboardComparisonGroupASummary = useMemo(() => {
+    const categoryTotal = dashboardComparisonGroupAReps.reduce((sum, rep) => sum + moneyToNumber(rep.categoryTotalTurnoverNetCzk), 0);
+    const topProductTotal = dashboardComparisonGroupAReps.reduce((sum, rep) => sum + moneyToNumber(rep.topProductTotalTurnoverNetCzk), 0);
+    return {
+      salesmenCount: dashboardComparisonGroupAReps.length,
+      categoryTotalTurnoverNetCzk: formatMoney(categoryTotal),
+      topProductTotalTurnoverNetCzk: formatMoney(topProductTotal)
+    };
+  }, [dashboardComparisonGroupAReps]);
+
+  const dashboardComparisonGroupBSummary = useMemo(() => {
+    const categoryTotal = dashboardComparisonGroupBReps.reduce((sum, rep) => sum + moneyToNumber(rep.categoryTotalTurnoverNetCzk), 0);
+    const topProductTotal = dashboardComparisonGroupBReps.reduce((sum, rep) => sum + moneyToNumber(rep.topProductTotalTurnoverNetCzk), 0);
+    return {
+      salesmenCount: dashboardComparisonGroupBReps.length,
+      categoryTotalTurnoverNetCzk: formatMoney(categoryTotal),
+      topProductTotalTurnoverNetCzk: formatMoney(topProductTotal)
+    };
+  }, [dashboardComparisonGroupBReps]);
+
+  const dashboardCanCompareGroups = dashboardComparisonGroupAIds.length > 0 && dashboardComparisonGroupBIds.length > 0;
+
+  const openDashboardComparisonDialog = () => {
+    const allSalesRepIds = dashboardSalesRepOptions.map((option) => option.id);
+    if (allSalesRepIds.length === 0) {
+      return;
+    }
+
+    const filteredIds = dashboardSalesRepOptions
+      .filter((option) => dashboardSalesRepFilterIds.includes(option.id))
+      .map((option) => option.id);
+    const defaultGroupAIds = filteredIds.length > 0 ? filteredIds : [allSalesRepIds[0]];
+
+    setDashboardComparisonGroupAIds(defaultGroupAIds);
+    setDashboardComparisonGroupBIds(allSalesRepIds);
+    setDashboardComparisonDialogOpen(true);
+  };
+
+  const dashboardCategoryComparisonRows = useMemo(() => {
+    const aggregateGroupCategories = (reps: DashboardComparisonSalesRep[]) => {
+      const byCategory = new Map<string, number>();
+      for (const rep of reps) {
+        for (const item of rep.categories) {
+          const turnover = moneyToNumber(item.turnoverNetCzk);
+          byCategory.set(item.category, (byCategory.get(item.category) ?? 0) + turnover);
+        }
+      }
+      const totalTurnover = [...byCategory.values()].reduce((sum, value) => sum + value, 0);
+      return { byCategory, totalTurnover };
+    };
+
+    const groupA = aggregateGroupCategories(dashboardComparisonGroupAReps);
+    const groupB = aggregateGroupCategories(dashboardComparisonGroupBReps);
+    const categories = new Set([...groupA.byCategory.keys(), ...groupB.byCategory.keys()]);
+
+    return [...categories]
+      .map((category) => {
+        const groupATurnover = groupA.byCategory.get(category) ?? 0;
+        const groupBTurnover = groupB.byCategory.get(category) ?? 0;
+        const hasGroupA = groupA.byCategory.has(category);
+        const hasGroupB = groupB.byCategory.has(category);
+
+        return {
+          category,
+          totalTurnover: groupATurnover + groupBTurnover,
+          groupA: hasGroupA
+            ? {
+                turnoverNetCzk: formatMoney(groupATurnover),
+                sharePct: groupA.totalTurnover === 0 ? "0.00" : ((groupATurnover / groupA.totalTurnover) * 100).toFixed(2)
+              }
+            : null,
+          groupB: hasGroupB
+            ? {
+                turnoverNetCzk: formatMoney(groupBTurnover),
+                sharePct: groupB.totalTurnover === 0 ? "0.00" : ((groupBTurnover / groupB.totalTurnover) * 100).toFixed(2)
+              }
+            : null
+        };
+      })
+      .sort((left, right) => right.totalTurnover - left.totalTurnover);
+  }, [dashboardComparisonGroupAReps, dashboardComparisonGroupBReps]);
+
+  const dashboardTopProductComparisonRows = useMemo(() => {
+    const aggregateGroupTopProducts = (reps: DashboardComparisonSalesRep[]) => {
+      const byTopProduct = new Map<number, { topProductName: string; turnover: number }>();
+      for (const rep of reps) {
+        for (const item of rep.products) {
+          const turnover = moneyToNumber(item.turnoverNetCzk);
+          const current = byTopProduct.get(item.topProductId) ?? { topProductName: item.topProductName, turnover: 0 };
+          current.turnover += turnover;
+          byTopProduct.set(item.topProductId, current);
+        }
+      }
+      const totalTurnover = [...byTopProduct.values()].reduce((sum, value) => sum + value.turnover, 0);
+      return { byTopProduct, totalTurnover };
+    };
+
+    const groupA = aggregateGroupTopProducts(dashboardComparisonGroupAReps);
+    const groupB = aggregateGroupTopProducts(dashboardComparisonGroupBReps);
+    const topProductIds = new Set([...groupA.byTopProduct.keys(), ...groupB.byTopProduct.keys()]);
+
+    return [...topProductIds]
+      .map((topProductId) => {
+        const groupAProduct = groupA.byTopProduct.get(topProductId);
+        const groupBProduct = groupB.byTopProduct.get(topProductId);
+        const groupATurnover = groupAProduct?.turnover ?? 0;
+        const groupBTurnover = groupBProduct?.turnover ?? 0;
+
+        return {
+          topProductId,
+          topProductName: groupAProduct?.topProductName ?? groupBProduct?.topProductName ?? `TOP product ${topProductId}`,
+          totalTurnover: groupATurnover + groupBTurnover,
+          groupA: groupAProduct
+            ? {
+                turnoverNetCzk: formatMoney(groupATurnover),
+                sharePct: groupA.totalTurnover === 0 ? "0.00" : ((groupATurnover / groupA.totalTurnover) * 100).toFixed(2)
+              }
+            : null,
+          groupB: groupBProduct
+            ? {
+                turnoverNetCzk: formatMoney(groupBTurnover),
+                sharePct: groupB.totalTurnover === 0 ? "0.00" : ((groupBTurnover / groupB.totalTurnover) * 100).toFixed(2)
+              }
+            : null
+        };
+      })
+      .sort((left, right) => right.totalTurnover - left.totalTurnover);
+  }, [dashboardComparisonGroupAReps, dashboardComparisonGroupBReps]);
 
   const tabs: Array<{ id: WorkspaceTab; label: string }> = [
     { id: "contact_list", label: "contact list" },
@@ -1567,6 +1756,9 @@ function App() {
 
   const loadDashboard = async (accessToken: string) => {
     setDashboardLoading(true);
+    setDashboardComparisonDialogOpen(false);
+    setDashboardComparisonGroupAIds([]);
+    setDashboardComparisonGroupBIds([]);
     try {
       const response = await fetch(`${API_BASE_URL}/api/workspace/dashboard`, {
         headers: { Authorization: `Bearer ${accessToken}` }
@@ -1942,6 +2134,9 @@ function App() {
     setTopProducts([]);
     setDashboard(null);
     setDashboardSalesRepFilterIds([]);
+    setDashboardComparisonDialogOpen(false);
+    setDashboardComparisonGroupAIds([]);
+    setDashboardComparisonGroupBIds([]);
     setCustomerImportFile(null);
     setProductImportFile(null);
     setOrderImportFile(null);
@@ -2083,7 +2278,10 @@ function App() {
               key={tab.id}
               type="button"
               className={activeTab === tab.id ? "tab-btn active" : "tab-btn"}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                setDashboardComparisonDialogOpen(false);
+              }}
             >
               {tab.label}
             </button>
@@ -2110,7 +2308,10 @@ function App() {
                 key={`top-${tab.id}`}
                 type="button"
                 className={activeTab === tab.id ? "top-tab active" : "top-tab"}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  setDashboardComparisonDialogOpen(false);
+                }}
               >
                 {tab.label}
               </button>
@@ -2575,6 +2776,15 @@ function App() {
                 <button type="button" onClick={() => token && loadDashboard(token)} disabled={dashboardLoading}>
                   {dashboardLoading ? "Loading..." : "Refresh dashboard"}
                 </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={openDashboardComparisonDialog}
+                    disabled={!dashboard || dashboardSalesRepOptions.length === 0}
+                  >
+                    Compare merchants
+                  </button>
+                )}
                 <p className="message">{dashboardMessage}</p>
                 <p className="hint">Current filter: {dashboardSelectedRepNames}</p>
                 {dashboard && (
@@ -2613,6 +2823,186 @@ function App() {
                   ))}
                 </ul>
               </article>
+            </div>
+          )}
+          {activeTab === "dashboard" && isAdmin && dashboardComparisonDialogOpen && dashboard && (
+            <div className="dialog-backdrop" role="presentation" onClick={() => setDashboardComparisonDialogOpen(false)}>
+              <section
+                className="dialog-card"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="merchant-compare-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="dialog-head">
+                  <h2 id="merchant-compare-title">Merchant comparison</h2>
+                  <button type="button" className="dialog-close-btn" onClick={() => setDashboardComparisonDialogOpen(false)}>
+                    Close
+                  </button>
+                </div>
+                <div className="comparison-selector-grid">
+                  <article className="comparison-filter-panel">
+                    <h3>Group A (left)</h3>
+                    <div className="multi-checklist">
+                      {dashboardSalesRepOptions.map((rep) => (
+                        <label key={`group-a-salesman-${rep.id}`} className="inline-check">
+                          <input
+                            type="checkbox"
+                            checked={dashboardComparisonGroupAIds.includes(rep.id)}
+                            onChange={(event) => {
+                              setDashboardComparisonGroupAIds((prev) => {
+                                const nextSet = new Set(prev);
+                                if (event.target.checked) {
+                                  nextSet.add(rep.id);
+                                } else {
+                                  nextSet.delete(rep.id);
+                                }
+                                return orderDashboardSalesRepIds(nextSet);
+                              });
+                            }}
+                          />
+                          {rep.name}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="actions">
+                      <button
+                        type="button"
+                        onClick={() => setDashboardComparisonGroupAIds(dashboardSalesRepOptions.map((option) => option.id))}
+                        disabled={dashboardComparisonGroupAIds.length === dashboardSalesRepOptions.length}
+                      >
+                        Select all A
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDashboardComparisonGroupAIds([])}
+                        disabled={dashboardComparisonGroupAIds.length === 0}
+                      >
+                        Clear A
+                      </button>
+                    </div>
+                  </article>
+
+                  <article className="comparison-filter-panel">
+                    <h3>Group B (right)</h3>
+                    <div className="multi-checklist">
+                      {dashboardSalesRepOptions.map((rep) => (
+                        <label key={`group-b-salesman-${rep.id}`} className="inline-check">
+                          <input
+                            type="checkbox"
+                            checked={dashboardComparisonGroupBIds.includes(rep.id)}
+                            onChange={(event) => {
+                              setDashboardComparisonGroupBIds((prev) => {
+                                const nextSet = new Set(prev);
+                                if (event.target.checked) {
+                                  nextSet.add(rep.id);
+                                } else {
+                                  nextSet.delete(rep.id);
+                                }
+                                return orderDashboardSalesRepIds(nextSet);
+                              });
+                            }}
+                          />
+                          {rep.name}
+                        </label>
+                      ))}
+                    </div>
+                    <div className="actions">
+                      <button
+                        type="button"
+                        onClick={() => setDashboardComparisonGroupBIds(dashboardSalesRepOptions.map((option) => option.id))}
+                        disabled={dashboardComparisonGroupBIds.length === dashboardSalesRepOptions.length}
+                      >
+                        Select all B
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDashboardComparisonGroupBIds([])}
+                        disabled={dashboardComparisonGroupBIds.length === 0}
+                      >
+                        Clear B
+                      </button>
+                    </div>
+                  </article>
+                </div>
+                {!dashboardCanCompareGroups ? (
+                  <p className="message">Select at least 1 salesman in Group A and 1 salesman in Group B.</p>
+                ) : (
+                  <>
+                    <div className="compare-merchants-summary">
+                      <article className="customer-card">
+                        <h3>Group A ({dashboardComparisonGroupASummary.salesmenCount})</h3>
+                        <p>
+                          TOP product sales: <strong>{dashboardComparisonGroupASummary.topProductTotalTurnoverNetCzk} CZK</strong>
+                        </p>
+                        <p>
+                          Category sales: <strong>{dashboardComparisonGroupASummary.categoryTotalTurnoverNetCzk} CZK</strong>
+                        </p>
+                      </article>
+                      <article className="customer-card">
+                        <h3>Group B ({dashboardComparisonGroupBSummary.salesmenCount})</h3>
+                        <p>
+                          TOP product sales: <strong>{dashboardComparisonGroupBSummary.topProductTotalTurnoverNetCzk} CZK</strong>
+                        </p>
+                        <p>
+                          Category sales: <strong>{dashboardComparisonGroupBSummary.categoryTotalTurnoverNetCzk} CZK</strong>
+                        </p>
+                      </article>
+                    </div>
+
+                    <article className="comparison-section">
+                      <h3>Sales of TOP products (Group A vs Group B)</h3>
+                      <div className="comparison-table-wrap">
+                        <table className="comparison-table">
+                          <thead>
+                            <tr>
+                              <th>TOP product</th>
+                              <th>Group A</th>
+                              <th>Group B</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dashboardTopProductComparisonRows.map((row) => (
+                              <tr key={row.topProductId}>
+                                <td>{row.topProductName}</td>
+                                <td>{row.groupA ? `${row.groupA.turnoverNetCzk} CZK (${row.groupA.sharePct}%)` : "-"}</td>
+                                <td>{row.groupB ? `${row.groupB.turnoverNetCzk} CZK (${row.groupB.sharePct}%)` : "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+
+                    <article className="comparison-section">
+                      <h3>Category share (Group A vs Group B)</h3>
+                      <div className="comparison-table-wrap">
+                        <table className="comparison-table">
+                          <thead>
+                            <tr>
+                              <th>Category</th>
+                              <th>Group A</th>
+                              <th>Group B</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dashboardCategoryComparisonRows.map((row) => (
+                              <tr key={row.category}>
+                                <td>{row.category}</td>
+                                <td>{row.groupA ? `${row.groupA.turnoverNetCzk} CZK (${row.groupA.sharePct}%)` : "-"}</td>
+                                <td>{row.groupB ? `${row.groupB.turnoverNetCzk} CZK (${row.groupB.sharePct}%)` : "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+                    {dashboardTopProductComparisonRows.length === 0 && dashboardCategoryComparisonRows.length === 0 ? (
+                      <p className="message">No sales data available for selected groups.</p>
+                    ) : null}
+                  </>
+                )}
+              </section>
             </div>
           )}
         </section>

@@ -414,6 +414,112 @@ button:disabled {
   font-size: 0.92rem;
 }
 
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 22, 41, 0.44);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 1000;
+}
+
+.dialog-card {
+  width: min(1200px, 96vw);
+  max-height: 92vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 1rem;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.2);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.dialog-head h2 {
+  margin: 0;
+}
+
+.dialog-close-btn {
+  background: #e9effc;
+  color: #1a3156;
+}
+
+.compare-merchants-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.55rem;
+}
+
+.comparison-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 0.75rem;
+}
+
+.comparison-filter-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 0.75rem;
+}
+
+.comparison-filter-panel h3 {
+  margin: 0 0 0.4rem;
+}
+
+.comparison-section {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.comparison-section h3 {
+  margin: 0;
+}
+
+.comparison-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.comparison-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.comparison-table th,
+.comparison-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid #e7edf8;
+}
+
+.comparison-table th {
+  position: sticky;
+  top: 0;
+  background: #edf4ff;
+  color: #2a3c58;
+}
+
+.comparison-table td:first-child,
+.comparison-table th:first-child {
+  font-weight: 700;
+  min-width: 190px;
+}
+
 .footnote {
   padding: 0.75rem 1rem 1rem;
   color: var(--muted);
@@ -451,5 +557,9 @@ code {
   .top-actions {
     flex-direction: column;
     align-items: flex-end;
+  }
+
+  .comparison-selector-grid {
+    grid-template-columns: 1fr;
   }
 }
