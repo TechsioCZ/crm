@@ -1856,20 +1856,42 @@ function App() {
         return;
       }
 
-      const response = await fetch(`${API_BASE_URL}/api/admin/imports/${endpointByKind[kind]}/xml`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          xml,
-          sourceName: `manual-file-${kind}-${file.name}`
-        })
-      });
+      const apiBaseTrimmed = API_BASE_URL.replace(/\/+$/, "");
+      const importRoute = `/admin/imports/${endpointByKind[kind]}/xml`;
+      const importUrlCandidates = [`${apiBaseTrimmed}/api${importRoute}`, `${apiBaseTrimmed}${importRoute}`];
+      let response: Response | null = null;
+      let attemptedUrl = importUrlCandidates[0];
+
+      for (const url of importUrlCandidates) {
+        attemptedUrl = url;
+        const candidateResponse = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            xml,
+            sourceName: `manual-file-${kind}-${file.name}`
+          })
+        });
+        response = candidateResponse;
+        if (candidateResponse.status !== 404) {
+          break;
+        }
+      }
+
+      if (!response) {
+        setMessageByKind("Import request failed.");
+        return;
+      }
 
       const body = (await response.json().catch(() => null)) as ImportResponse | null;
       if (!response.ok) {
+        if (response.status === 404) {
+          setMessageByKind(`Import failed (404). Endpoint not found: ${attemptedUrl}`);
+          return;
+        }
         setMessageByKind(body?.message ?? `Import failed (${response.status}).`);
         return;
       }
