@@ -50,6 +50,16 @@ const updateCategorySchema = z.object({
   name: z.string().trim().min(2).max(120)
 });
 
+const mergeCategoriesSchema = z
+  .object({
+    sourceCategoryIdA: z.coerce.number().int().positive(),
+    sourceCategoryIdB: z.coerce.number().int().positive(),
+    mergedCategoryName: z.string().trim().min(2).max(120)
+  })
+  .refine((value) => value.sourceCategoryIdA !== value.sourceCategoryIdB, {
+    message: "Source categories must be different."
+  });
+
 const createTopProductSchema = z.object({
   name: z.string().trim().min(2).max(140),
   sku: z.string().trim().min(1).max(80).optional(),
@@ -926,6 +936,152 @@ workspaceRouter.patch("/categories/:categoryId", requireRole("admin"), async (re
     }
     throw error;
   }
+});
+
+workspaceRouter.delete("/categories/:categoryId", requireRole("admin"), async (req, res) => {
+  const paramParsed = categoryIdParamSchema.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ message: "Invalid category id." });
+    return;
+  }
+
+  const categoryId = paramParsed.data.categoryId;
+  const category = await prisma.catalogCategory.findUnique({
+    where: { id: categoryId },
+    select: {
+      id: true,
+      name: true
+    }
+  });
+
+  if (!category) {
+    res.status(404).json({ message: "Category not found." });
+    return;
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const topProductsUpdate = await tx.globalTopProduct.updateMany({
+      where: {
+        categoryName: category.name
+      },
+      data: {
+        categoryName: null
+      }
+    });
+
+    await tx.catalogCategory.delete({
+      where: {
+        id: categoryId
+      }
+    });
+
+    return {
+      clearedTopProducts: topProductsUpdate.count
+    };
+  });
+
+  res.json({
+    message: "Category deleted.",
+    deletedCategory: category,
+    clearedTopProducts: result.clearedTopProducts
+  });
+});
+
+workspaceRouter.post("/categories/merge", requireRole("admin"), async (req, res) => {
+  const parsed = mergeCategoriesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "Invalid category merge payload." });
+    return;
+  }
+
+  const sourceCategoryIds = [parsed.data.sourceCategoryIdA, parsed.data.sourceCategoryIdB];
+  const sourceCategories = await prisma.catalogCategory.findMany({
+    where: {
+      id: {
+        in: sourceCategoryIds
+      }
+    },
+    select: {
+      id: true,
+      name: true
+    }
+  });
+
+  if (sourceCategories.length !== 2) {
+    res.status(404).json({ message: "One or both source categories were not found." });
+    return;
+  }
+
+  const sourceCategoryNames = sourceCategories.map((category) => category.name);
+  const mergedCategoryName = parsed.data.mergedCategoryName;
+
+  const result = await prisma.$transaction(async (tx) => {
+    const targetCategory = await tx.catalogCategory.upsert({
+      where: {
+        name: mergedCategoryName
+      },
+      update: {},
+      create: {
+        name: mergedCategoryName
+      },
+      select: {
+        id: true,
+        name: true
+      }
+    });
+
+    const topProductsUpdate = await tx.globalTopProduct.updateMany({
+      where: {
+        categoryName: {
+          in: sourceCategoryNames
+        }
+      },
+      data: {
+        categoryName: targetCategory.name
+      }
+    });
+
+    const orderItemsUpdate = await tx.orderItem.updateMany({
+      where: {
+        category: {
+          in: sourceCategoryNames
+        }
+      },
+      data: {
+        category: targetCategory.name
+      }
+    });
+
+    const sourceIdsToDelete = sourceCategories
+      .map((category) => category.id)
+      .filter((sourceId) => sourceId !== targetCategory.id);
+
+    const deletedCategories = sourceIdsToDelete.length
+      ? await tx.catalogCategory.deleteMany({
+          where: {
+            id: {
+              in: sourceIdsToDelete
+            }
+          }
+        })
+      : { count: 0 };
+
+    return {
+      targetCategory,
+      topProductsUpdated: topProductsUpdate.count,
+      orderItemsUpdated: orderItemsUpdate.count,
+      deletedCategories: deletedCategories.count
+    };
+  });
+
+  res.json({
+    message: "Categories merged.",
+    mergedCategory: result.targetCategory,
+    sourceCategories,
+    topProductsUpdated: result.topProductsUpdated,
+    orderItemsUpdated: result.orderItemsUpdated,
+    deletedCategories: result.deletedCategories
+  });
 });
 
 workspaceRouter.get("/top-products", async (req, res) => {

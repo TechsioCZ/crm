@@ -287,10 +287,12 @@ const IMPORT_TEMPLATES: Record<ImportKind, { filename: string; xml: string }> = 
   <customer>
     <customer_id>1001</customer_id>
     <name>ACME s.r.o.</name>
+    <sales_rep_email>sales01@crm.local</sales_rep_email>
   </customer>
   <customer>
     <customer_id>1002</customer_id>
     <name>Blue River a.s.</name>
+    <sales_rep_name>Obchodnik 02</sales_rep_name>
   </customer>
 </customers>
 `
@@ -438,6 +440,9 @@ function App() {
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [categoryFilter, setCategoryFilter] = useState("");
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [mergeCategoryAId, setMergeCategoryAId] = useState("");
+  const [mergeCategoryBId, setMergeCategoryBId] = useState("");
+  const [mergeCategoryName, setMergeCategoryName] = useState("");
   const [categoriesMessage, setCategoriesMessage] = useState("Categories not loaded yet.");
   const [categoriesLoading, setCategoriesLoading] = useState(false);
 
@@ -775,6 +780,26 @@ function App() {
       return String(customer.currentAssignment?.salesRepId ?? "") === staffCustomerCurrentRepFilter;
     });
   }, [staffCustomerCurrentRepFilter, staffCustomerNameFilter, staffCustomers]);
+
+  const categoryById = useMemo(
+    () => new Map(categories.map((category) => [String(category.id), category] as const)),
+    [categories]
+  );
+
+  const buildMergedCategorySuggestion = useCallback(
+    (categoryAId: string, categoryBId: string) => {
+      if (!categoryAId || !categoryBId || categoryAId === categoryBId) {
+        return "";
+      }
+      const categoryA = categoryById.get(categoryAId);
+      const categoryB = categoryById.get(categoryBId);
+      if (!categoryA || !categoryB) {
+        return "";
+      }
+      return `${categoryA.name} - ${categoryB.name}`;
+    },
+    [categoryById]
+  );
 
   const tabs: Array<{ id: WorkspaceTab; label: string }> = [
     { id: "contact_list", label: "contact list" },
@@ -2042,6 +2067,8 @@ function App() {
       setCategories(body.categories);
       setCategoriesMessage(`Loaded ${body.summary.count} categories.`);
       setCategoryNames(body.categories.map((item) => item.name));
+      setMergeCategoryAId((prev) => (body.categories.some((category) => String(category.id) === prev) ? prev : ""));
+      setMergeCategoryBId((prev) => (body.categories.some((category) => String(category.id) === prev) ? prev : ""));
     } catch {
       setCategories([]);
       setCategoriesMessage("Categories request failed.");
@@ -2285,6 +2312,106 @@ function App() {
     }
   };
 
+  const handleDeleteCategory = async (category: CategoryRow) => {
+    if (!token || !isAdmin) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Do you really want to delete category "${category.name}"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setCategoriesLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/workspace/categories/${category.id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      const body = (await response.json().catch(() => null)) as { message?: string; clearedTopProducts?: number } | null;
+      if (!response.ok) {
+        setCategoriesMessage(body?.message ?? `Delete category failed (${response.status}).`);
+        return;
+      }
+
+      const clearedInfo =
+        typeof body?.clearedTopProducts === "number"
+          ? ` ${body.clearedTopProducts} TOP products were unassigned from this category.`
+          : "";
+      setCategoriesMessage(`${body?.message ?? "Category deleted."}${clearedInfo}`);
+      await loadCategories(token);
+      await loadMeta(token);
+      await loadTopProducts(token);
+    } catch {
+      setCategoriesMessage("Delete category request failed.");
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
+
+  const handleMergeCategories = async () => {
+    if (!token || !isAdmin) {
+      return;
+    }
+
+    if (!mergeCategoryAId || !mergeCategoryBId) {
+      setCategoriesMessage("Select 2 categories to merge.");
+      return;
+    }
+    if (mergeCategoryAId === mergeCategoryBId) {
+      setCategoriesMessage("Select two different categories.");
+      return;
+    }
+    if (!mergeCategoryName.trim()) {
+      setCategoriesMessage("Merged category name is required.");
+      return;
+    }
+
+    setCategoriesLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/workspace/categories/merge`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          sourceCategoryIdA: Number.parseInt(mergeCategoryAId, 10),
+          sourceCategoryIdB: Number.parseInt(mergeCategoryBId, 10),
+          mergedCategoryName: mergeCategoryName.trim()
+        })
+      });
+
+      const body = (await response.json().catch(() => null)) as
+        | { message?: string; topProductsUpdated?: number; orderItemsUpdated?: number }
+        | null;
+      if (!response.ok) {
+        setCategoriesMessage(body?.message ?? `Merge categories failed (${response.status}).`);
+        return;
+      }
+
+      setCategoriesMessage(
+        `${body?.message ?? "Categories merged."} TOP products updated: ${body?.topProductsUpdated ?? 0}, order items updated: ${
+          body?.orderItemsUpdated ?? 0
+        }.`
+      );
+      setMergeCategoryAId("");
+      setMergeCategoryBId("");
+      setMergeCategoryName("");
+      await loadCategories(token);
+      await loadMeta(token);
+      await loadTopProducts(token);
+      await loadDashboard(token);
+    } catch {
+      setCategoriesMessage("Merge categories request failed.");
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
+
   const handleCreateTopProduct = async () => {
     if (!token) {
       return;
@@ -2501,6 +2628,9 @@ function App() {
     setCustomerImportLoading(false);
     setProductImportLoading(false);
     setOrderImportLoading(false);
+    setMergeCategoryAId("");
+    setMergeCategoryBId("");
+    setMergeCategoryName("");
     setStaffSalesReps([]);
     setStaffCustomers([]);
     setStaffMessage("Staff not loaded yet.");
@@ -2999,6 +3129,62 @@ function App() {
                     <button type="button" onClick={handleCreateCategory}>
                       Create category
                     </button>
+                    <div className="merge-box">
+                      <h3>Merge categories</h3>
+                      <label>
+                        Category 1
+                        <select
+                          value={mergeCategoryAId}
+                          onChange={(event) => {
+                            const nextAId = event.target.value;
+                            setMergeCategoryAId(nextAId);
+                            const suggestion = buildMergedCategorySuggestion(nextAId, mergeCategoryBId);
+                            if (suggestion) {
+                              setMergeCategoryName(suggestion);
+                            }
+                          }}
+                        >
+                          <option value="">Select category</option>
+                          {categories.map((category) => (
+                            <option key={`merge-a-${category.id}`} value={category.id}>
+                              {category.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Category 2
+                        <select
+                          value={mergeCategoryBId}
+                          onChange={(event) => {
+                            const nextBId = event.target.value;
+                            setMergeCategoryBId(nextBId);
+                            const suggestion = buildMergedCategorySuggestion(mergeCategoryAId, nextBId);
+                            if (suggestion) {
+                              setMergeCategoryName(suggestion);
+                            }
+                          }}
+                        >
+                          <option value="">Select category</option>
+                          {categories.map((category) => (
+                            <option key={`merge-b-${category.id}`} value={category.id}>
+                              {category.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        New merged category name
+                        <input
+                          value={mergeCategoryName}
+                          onChange={(event) => setMergeCategoryName(event.target.value)}
+                          placeholder={buildMergedCategorySuggestion(mergeCategoryAId, mergeCategoryBId) || "Category A - Category B"}
+                        />
+                      </label>
+                      <button type="button" onClick={handleMergeCategories} disabled={categoriesLoading}>
+                        Merge categories
+                      </button>
+                    </div>
                   </>
                 )}
                 <p className="message">{categoriesMessage}</p>
@@ -3020,6 +3206,16 @@ function App() {
                       <button type="button" onClick={() => handleOpenCategoryWindow(category.name)}>
                         Open products in category
                       </button>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          className="danger-btn"
+                          onClick={() => handleDeleteCategory(category)}
+                          disabled={categoriesLoading}
+                        >
+                          Delete category
+                        </button>
+                      )}
                     </article>
                   ))}
                 </div>

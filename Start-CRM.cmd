@@ -42,15 +42,17 @@ if errorlevel 1 exit /b 1
 call :ensure_node_modules "%FRONTEND_DIR%" "frontend"
 if errorlevel 1 exit /b 1
 
-call :prepare_backend "%BACKEND_DIR%"
-if errorlevel 1 exit /b 1
-
 call :is_port_listening 4000
 if errorlevel 1 (
+  set "BACKEND_ALREADY_RUNNING=0"
+  call :prepare_backend "%BACKEND_DIR%"
+  if errorlevel 1 exit /b 1
   echo [START] Starting backend on port 4000...
   start "CRM Backend" cmd /k "cd /d ""%BACKEND_DIR%"" && npm.cmd run dev"
 ) else (
+  set "BACKEND_ALREADY_RUNNING=1"
   echo [OK] Backend already running on port 4000.
+  echo [INFO] Skipping Prisma prepare because backend is already running.
 )
 
 call :is_port_listening 5173

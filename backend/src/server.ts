@@ -75,7 +75,8 @@ app.get("/", (_req, res) => {
       workspaceProducts: "GET /api/workspace/products",
       workspaceOrders: "GET /api/workspace/orders",
       workspaceOrderDetail: "GET /api/workspace/orders/:orderDbId",
-      workspaceCategories: "GET/POST/PATCH /api/workspace/categories",
+      workspaceCategories: "GET/POST/PATCH/DELETE /api/workspace/categories",
+      workspaceMergeCategories: "POST /api/workspace/categories/merge",
       workspaceTopProducts: "GET/POST/PATCH /api/workspace/top-products",
       workspaceDashboard: "GET /api/workspace/dashboard"
     }

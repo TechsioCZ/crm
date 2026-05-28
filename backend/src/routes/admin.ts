@@ -188,6 +188,65 @@ function parseOptionalBoolean(value: string | undefined): boolean | null {
   return null;
 }
 
+function normalizeLookupToken(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+async function upsertActiveCustomerAssignment(
+  tx: Prisma.TransactionClient,
+  customerId: number,
+  salesRepId: number,
+  assignedById: number
+): Promise<boolean> {
+  const activeAssignments = await tx.customerAssignment.findMany({
+    where: {
+      customerId,
+      endedAt: null
+    },
+    orderBy: {
+      startedAt: "desc"
+    },
+    select: {
+      id: true,
+      salesRepId: true
+    }
+  });
+
+  if (activeAssignments[0]?.salesRepId === salesRepId && activeAssignments.length <= 1) {
+    return false;
+  }
+
+  const now = new Date();
+  if (activeAssignments.length > 0) {
+    await tx.customerAssignment.updateMany({
+      where: {
+        id: {
+          in: activeAssignments.map((assignment) => assignment.id)
+        }
+      },
+      data: {
+        endedAt: now
+      }
+    });
+  }
+
+  await tx.customerAssignment.create({
+    data: {
+      customerId,
+      salesRepId,
+      assignedById,
+      startedAt: now
+    }
+  });
+
+  return true;
+}
+
 function extractOrderNodes(container: unknown): JsonRecord[] {
   const root = asRecord(container);
   if (!root) {
@@ -1035,12 +1094,41 @@ adminRouter.post("/imports/customers/xml", async (req, res) => {
 
   const createdCustomerIds: number[] = [];
   const updatedCustomerIds: number[] = [];
+  const autoAssignedCustomerIds: number[] = [];
   let hasExplicitCustomerId = false;
+  const assignedById = req.authUser!.userId;
+
+  const activeSalesReps = await prisma.user.findMany({
+    where: {
+      role: "sales_rep",
+      isActive: true
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true
+    }
+  });
+
+  const salesRepById = new Map(activeSalesReps.map((rep) => [rep.id, rep.id] as const));
+  const salesRepByEmail = new Map(
+    activeSalesReps
+      .map((rep) => [normalizeLookupToken(rep.email), rep.id] as const)
+      .filter((entry): entry is [string, number] => entry[0] !== null)
+  );
+  const salesRepByName = new Map(
+    activeSalesReps
+      .map((rep) => [normalizeLookupToken(rep.name), rep.id] as const)
+      .filter((entry): entry is [string, number] => entry[0] !== null)
+  );
 
   for (const [index, customerNode] of customerNodes.entries()) {
     const recordIndex = index + 1;
     const customerIdRaw = readString(customerNode, ["customer_id", "customerId", "id"]) ?? null;
     const customerName = readString(customerNode, ["name", "customer_name"]) ?? null;
+    const salesRepIdRaw = readString(customerNode, ["sales_rep_id", "salesRepId", "salesman_id"]) ?? null;
+    const salesRepEmailRaw = readString(customerNode, ["sales_rep_email", "salesRepEmail", "salesman_email"]) ?? null;
+    const salesRepNameRaw = readString(customerNode, ["sales_rep_name", "salesRepName", "salesman_name", "salesman"]) ?? null;
 
     if (!customerName) {
       errors.push({
@@ -1051,6 +1139,49 @@ adminRouter.post("/imports/customers/xml", async (req, res) => {
         rawRecord: customerNode as Prisma.InputJsonValue
       });
       continue;
+    }
+
+    const hasSalesRepAssignmentRequest = Boolean(
+      normalizeLookupToken(salesRepIdRaw) ?? normalizeLookupToken(salesRepEmailRaw) ?? normalizeLookupToken(salesRepNameRaw)
+    );
+    let resolvedSalesRepId: number | null = null;
+    if (hasSalesRepAssignmentRequest) {
+      if (salesRepIdRaw) {
+        const parsedSalesRepId = parsePositiveInteger(salesRepIdRaw);
+        if (parsedSalesRepId === null) {
+          errors.push({
+            recordIndex,
+            orderIdValue: customerName,
+            customerIdValue: customerIdRaw,
+            message: "sales_rep_id must be a positive integer.",
+            rawRecord: customerNode as Prisma.InputJsonValue
+          });
+          continue;
+        }
+
+        resolvedSalesRepId = salesRepById.get(parsedSalesRepId) ?? null;
+      } else {
+        const salesRepEmailToken = normalizeLookupToken(salesRepEmailRaw);
+        if (salesRepEmailToken) {
+          resolvedSalesRepId = salesRepByEmail.get(salesRepEmailToken) ?? null;
+        } else {
+          const salesRepNameToken = normalizeLookupToken(salesRepNameRaw);
+          if (salesRepNameToken) {
+            resolvedSalesRepId = salesRepByName.get(salesRepNameToken) ?? null;
+          }
+        }
+      }
+
+      if (resolvedSalesRepId === null) {
+        errors.push({
+          recordIndex,
+          orderIdValue: customerName,
+          customerIdValue: customerIdRaw,
+          message: "Sales rep not found or inactive. Use sales_rep_id, sales_rep_email, or sales_rep_name.",
+          rawRecord: customerNode as Prisma.InputJsonValue
+        });
+        continue;
+      }
     }
 
     const parsedCustomerId = parsePositiveInteger(customerIdRaw ?? undefined);
@@ -1080,18 +1211,41 @@ adminRouter.post("/imports/customers/xml", async (req, res) => {
               data: { name: customerName }
             });
           }
+          if (resolvedSalesRepId !== null) {
+            const changed = await prisma.$transaction((tx) =>
+              upsertActiveCustomerAssignment(tx, parsedCustomerId, resolvedSalesRepId!, assignedById)
+            );
+            if (changed) {
+              autoAssignedCustomerIds.push(parsedCustomerId);
+            }
+          }
           updatedCustomerIds.push(parsedCustomerId);
           continue;
         }
 
-        const created = await prisma.customer.create({
-          data: {
-            id: parsedCustomerId,
-            name: customerName
-          },
-          select: { id: true }
+        const created = await prisma.$transaction(async (tx) => {
+          const createdCustomer = await tx.customer.create({
+            data: {
+              id: parsedCustomerId,
+              name: customerName
+            },
+            select: { id: true }
+          });
+
+          let assignmentChanged = false;
+          if (resolvedSalesRepId !== null) {
+            assignmentChanged = await upsertActiveCustomerAssignment(tx, createdCustomer.id, resolvedSalesRepId, assignedById);
+          }
+
+          return {
+            id: createdCustomer.id,
+            assignmentChanged
+          };
         });
         createdCustomerIds.push(created.id);
+        if (created.assignmentChanged) {
+          autoAssignedCustomerIds.push(created.id);
+        }
         continue;
       }
 
@@ -1101,17 +1255,40 @@ adminRouter.post("/imports/customers/xml", async (req, res) => {
       });
 
       if (existingByName) {
+        if (resolvedSalesRepId !== null) {
+          const changed = await prisma.$transaction((tx) =>
+            upsertActiveCustomerAssignment(tx, existingByName.id, resolvedSalesRepId!, assignedById)
+          );
+          if (changed) {
+            autoAssignedCustomerIds.push(existingByName.id);
+          }
+        }
         updatedCustomerIds.push(existingByName.id);
         continue;
       }
 
-      const created = await prisma.customer.create({
-        data: {
-          name: customerName
-        },
-        select: { id: true }
+      const created = await prisma.$transaction(async (tx) => {
+        const createdCustomer = await tx.customer.create({
+          data: {
+            name: customerName
+          },
+          select: { id: true }
+        });
+
+        let assignmentChanged = false;
+        if (resolvedSalesRepId !== null) {
+          assignmentChanged = await upsertActiveCustomerAssignment(tx, createdCustomer.id, resolvedSalesRepId, assignedById);
+        }
+
+        return {
+          id: createdCustomer.id,
+          assignmentChanged
+        };
       });
       createdCustomerIds.push(created.id);
+      if (created.assignmentChanged) {
+        autoAssignedCustomerIds.push(created.id);
+      }
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
         errors.push({
@@ -1166,6 +1343,7 @@ adminRouter.post("/imports/customers/xml", async (req, res) => {
     run: finishedRun,
     createdCustomerIds,
     updatedCustomerIds,
+    autoAssignedCustomerIds,
     errors
   });
 });
@@ -1234,6 +1412,38 @@ adminRouter.post("/imports/products/xml", async (req, res) => {
       errors: []
     });
     return;
+  }
+
+  const importedCategoryNames = [
+    ...new Set(
+      productNodes
+        .map((productNode) => readString(productNode, ["category_name", "category"]))
+        .filter((name): name is string => Boolean(name && name.trim().length > 0))
+    )
+  ];
+
+  const createdCategoryNames: string[] = [];
+  if (importedCategoryNames.length > 0) {
+    const existingCategories = await prisma.catalogCategory.findMany({
+      where: {
+        name: {
+          in: importedCategoryNames
+        }
+      },
+      select: {
+        name: true
+      }
+    });
+
+    const existingCategorySet = new Set(existingCategories.map((category) => category.name));
+    const missingCategoryNames = importedCategoryNames.filter((name) => !existingCategorySet.has(name));
+    if (missingCategoryNames.length > 0) {
+      await prisma.catalogCategory.createMany({
+        data: missingCategoryNames.map((name) => ({ name })),
+        skipDuplicates: true
+      });
+      createdCategoryNames.push(...missingCategoryNames);
+    }
   }
 
   const errors: Array<{
@@ -1472,6 +1682,7 @@ adminRouter.post("/imports/products/xml", async (req, res) => {
   res.json({
     message: "Product import completed.",
     run: finishedRun,
+    createdCategoryNames,
     createdProductIds,
     updatedProductIds,
     errors

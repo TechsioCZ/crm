@@ -282,6 +282,10 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.danger-btn {
+  background: #c53d3d;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -295,6 +299,19 @@ button:disabled {
   border-top: 1px dashed var(--line);
   display: grid;
   gap: 0.55rem;
+}
+
+.merge-box {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--line);
+  display: grid;
+  gap: 0.55rem;
+}
+
+.merge-box h3 {
+  margin: 0;
+  font-size: 0.95rem;
 }
 
 .import-box h3 {
