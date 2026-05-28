@@ -67,13 +67,15 @@ async function syncDevUserToDatabase(devUser: DevUser): Promise<void> {
     update: {
       name: devUser.name,
       role: devUser.role,
-      passwordHash
+      passwordHash,
+      isActive: true
     },
     create: {
       email: devUser.email,
       name: devUser.name,
       role: devUser.role,
-      passwordHash
+      passwordHash,
+      isActive: true
     }
   });
 }
@@ -92,6 +94,10 @@ authRouter.post("/login", async (req, res) => {
 
   if (!user) {
     res.status(401).json({ message: "Invalid credentials." });
+    return;
+  }
+  if (!user.isActive) {
+    res.status(403).json({ message: "User account is inactive." });
     return;
   }
 
@@ -135,6 +141,10 @@ authRouter.post("/refresh", async (req, res) => {
     const user = await prisma.user.findUnique({ where: { id: payload.userId } });
     if (!user) {
       res.status(401).json({ message: "User no longer exists." });
+      return;
+    }
+    if (!user.isActive) {
+      res.status(401).json({ message: "User account is inactive." });
       return;
     }
 

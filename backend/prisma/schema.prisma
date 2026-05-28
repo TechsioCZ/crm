@@ -55,6 +55,7 @@ model User {
   passwordHash String
   name         String
   role         Role     @default(sales_rep)
+  isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

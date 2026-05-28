@@ -42,6 +42,9 @@ if errorlevel 1 exit /b 1
 call :ensure_node_modules "%FRONTEND_DIR%" "frontend"
 if errorlevel 1 exit /b 1
 
+call :prepare_backend "%BACKEND_DIR%"
+if errorlevel 1 exit /b 1
+
 call :is_port_listening 4000
 if errorlevel 1 (
   echo [START] Starting backend on port 4000...
@@ -84,6 +87,28 @@ echo - svoboda@crm.local / Sales123^^!
 echo.
 echo To stop the app, run: Stop-CRM.cmd
 echo.
+exit /b 0
+
+:prepare_backend
+set "TARGET_DIR=%~1"
+echo [SETUP] Preparing backend database and Prisma client...
+pushd "%TARGET_DIR%" >nul
+call npx.cmd prisma migrate deploy
+if errorlevel 1 (
+  popd >nul
+  echo [ERROR] Prisma migrate deploy failed.
+  pause
+  exit /b 1
+)
+call npm.cmd run prisma:generate
+if errorlevel 1 (
+  popd >nul
+  echo [ERROR] Prisma generate failed.
+  pause
+  exit /b 1
+)
+popd >nul
+echo [OK] Backend Prisma setup completed.
 exit /b 0
 
 :ensure_node_modules

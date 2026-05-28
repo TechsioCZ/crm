@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import "./App.css";
 
 type UserRole = "admin" | "sales_rep";
-type WorkspaceTab = "contact_list" | "product_list" | "order_list" | "categories" | "dashboard";
+type WorkspaceTab = "contact_list" | "product_list" | "order_list" | "categories" | "staff" | "dashboard";
 
 type AuthUser = {
   userId: number;
@@ -21,6 +21,30 @@ type SalesRepOption = {
   id: number;
   name: string;
   email: string;
+};
+
+type StaffSalesRepRow = SalesRepOption & {
+  isActive: boolean;
+  createdAt: string;
+  activeCustomerCount: number;
+};
+
+type StaffCustomerAssignment = {
+  id: number;
+  customerId: number;
+  salesRepId: number;
+  assignedById: number | null;
+  startedAt: string;
+  endedAt: string | null;
+  salesRep: SalesRepOption;
+  assignedBy: SalesRepOption | null;
+};
+
+type StaffCustomerRow = {
+  id: number;
+  name: string;
+  currentAssignment: StaffCustomerAssignment | null;
+  assignmentHistory: StaffCustomerAssignment[];
 };
 
 type DevUser = {
@@ -443,6 +467,23 @@ function App() {
   const [dashboardComparisonGroupAIds, setDashboardComparisonGroupAIds] = useState<number[]>([]);
   const [dashboardComparisonGroupBIds, setDashboardComparisonGroupBIds] = useState<number[]>([]);
 
+  const [staffSalesReps, setStaffSalesReps] = useState<StaffSalesRepRow[]>([]);
+  const [staffCustomers, setStaffCustomers] = useState<StaffCustomerRow[]>([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffMessage, setStaffMessage] = useState("Staff not loaded yet.");
+  const [staffCreateName, setStaffCreateName] = useState("");
+  const [staffCreateEmail, setStaffCreateEmail] = useState("");
+  const [staffCreatePassword, setStaffCreatePassword] = useState("");
+  const [staffEditSalesRepId, setStaffEditSalesRepId] = useState("");
+  const [staffEditName, setStaffEditName] = useState("");
+  const [staffEditEmail, setStaffEditEmail] = useState("");
+  const [staffEditPassword, setStaffEditPassword] = useState("");
+  const [staffDeactivateTargetByRepId, setStaffDeactivateTargetByRepId] = useState<Record<number, string>>({});
+  const [staffCustomerNameFilter, setStaffCustomerNameFilter] = useState("");
+  const [staffCustomerCurrentRepFilter, setStaffCustomerCurrentRepFilter] = useState("");
+  const [staffSelectedCustomerIds, setStaffSelectedCustomerIds] = useState<number[]>([]);
+  const [staffAssignTargetSalesRepId, setStaffAssignTargetSalesRepId] = useState("");
+
   const isLoggedIn = useMemo(() => Boolean(token), [token]);
   const isAdmin = user?.role === "admin";
 
@@ -711,11 +752,36 @@ function App() {
       .sort((left, right) => right.totalTurnover - left.totalTurnover);
   }, [dashboardComparisonGroupAReps, dashboardComparisonGroupBReps]);
 
+  const staffActiveSalesReps = useMemo(
+    () => staffSalesReps.filter((rep) => rep.isActive).sort((left, right) => left.name.localeCompare(right.name)),
+    [staffSalesReps]
+  );
+
+  const staffFilteredCustomers = useMemo(() => {
+    const nameToken = staffCustomerNameFilter.trim().toLowerCase();
+    return staffCustomers.filter((customer) => {
+      if (nameToken && !customer.name.toLowerCase().includes(nameToken)) {
+        return false;
+      }
+
+      if (!staffCustomerCurrentRepFilter) {
+        return true;
+      }
+
+      if (staffCustomerCurrentRepFilter === "unassigned") {
+        return customer.currentAssignment === null;
+      }
+
+      return String(customer.currentAssignment?.salesRepId ?? "") === staffCustomerCurrentRepFilter;
+    });
+  }, [staffCustomerCurrentRepFilter, staffCustomerNameFilter, staffCustomers]);
+
   const tabs: Array<{ id: WorkspaceTab; label: string }> = [
     { id: "contact_list", label: "contact list" },
     { id: "product_list", label: "product list" },
     { id: "order_list", label: "order list" },
     { id: "categories", label: "categories" },
+    ...(isAdmin ? [{ id: "staff" as const, label: "staff" }] : []),
     { id: "dashboard", label: "dashboard" }
   ];
 
@@ -795,6 +861,270 @@ function App() {
       setOrderStatusOptions(body.orderStatuses);
     } catch {
       // silent
+    }
+  };
+
+  const loadStaffData = async (accessToken: string) => {
+    setStaffLoading(true);
+    try {
+      const [salesRepsResponse, customersResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/admin/sales-reps`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        }),
+        fetch(`${API_BASE_URL}/api/admin/customers`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        })
+      ]);
+
+      if (!salesRepsResponse.ok || !customersResponse.ok) {
+        setStaffSalesReps([]);
+        setStaffCustomers([]);
+        const status = !salesRepsResponse.ok ? salesRepsResponse.status : customersResponse.status;
+        setStaffMessage(`Staff load failed (${status}).`);
+        return;
+      }
+
+      const salesRepsBody = (await salesRepsResponse.json()) as { salesReps: StaffSalesRepRow[] };
+      const customersBody = (await customersResponse.json()) as { customers: StaffCustomerRow[] };
+      setStaffSalesReps(salesRepsBody.salesReps);
+      setStaffCustomers(customersBody.customers);
+      setStaffMessage(`Loaded ${salesRepsBody.salesReps.length} sales reps and ${customersBody.customers.length} customers.`);
+
+      setStaffSelectedCustomerIds((prev) => prev.filter((id) => customersBody.customers.some((customer) => customer.id === id)));
+      if (staffEditSalesRepId && !salesRepsBody.salesReps.some((rep) => String(rep.id) === staffEditSalesRepId)) {
+        setStaffEditSalesRepId("");
+        setStaffEditName("");
+        setStaffEditEmail("");
+        setStaffEditPassword("");
+      }
+      if (staffAssignTargetSalesRepId && !salesRepsBody.salesReps.some((rep) => String(rep.id) === staffAssignTargetSalesRepId)) {
+        setStaffAssignTargetSalesRepId("");
+      }
+    } catch {
+      setStaffSalesReps([]);
+      setStaffCustomers([]);
+      setStaffMessage("Staff request failed.");
+    } finally {
+      setStaffLoading(false);
+    }
+  };
+
+  const handleCreateStaffSalesRep = async () => {
+    if (!token || !isAdmin) {
+      return;
+    }
+    if (!staffCreateName.trim() || !staffCreateEmail.trim() || !staffCreatePassword.trim()) {
+      setStaffMessage("Name, email and password are required.");
+      return;
+    }
+
+    setStaffLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/sales-reps`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name: staffCreateName.trim(),
+          email: staffCreateEmail.trim().toLowerCase(),
+          password: staffCreatePassword
+        })
+      });
+
+      const body = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setStaffMessage(body?.message ?? `Create sales rep failed (${response.status}).`);
+        return;
+      }
+
+      setStaffCreateName("");
+      setStaffCreateEmail("");
+      setStaffCreatePassword("");
+      setStaffMessage("Sales rep created.");
+      await Promise.all([loadStaffData(token), loadMeta(token), loadDashboard(token)]);
+    } catch {
+      setStaffMessage("Create sales rep request failed.");
+    } finally {
+      setStaffLoading(false);
+    }
+  };
+
+  const handleLoadSalesRepToEdit = (salesRepId: string) => {
+    setStaffEditSalesRepId(salesRepId);
+    const rep = staffSalesReps.find((row) => String(row.id) === salesRepId);
+    if (!rep) {
+      setStaffEditName("");
+      setStaffEditEmail("");
+      setStaffEditPassword("");
+      return;
+    }
+    setStaffEditName(rep.name);
+    setStaffEditEmail(rep.email);
+    setStaffEditPassword("");
+  };
+
+  const handleUpdateStaffSalesRep = async () => {
+    if (!token || !isAdmin) {
+      return;
+    }
+    if (!staffEditSalesRepId) {
+      setStaffMessage("Select a sales rep to edit.");
+      return;
+    }
+
+    const selectedRep = staffSalesReps.find((rep) => String(rep.id) === staffEditSalesRepId);
+    if (!selectedRep) {
+      setStaffMessage("Selected sales rep no longer exists.");
+      return;
+    }
+
+    const payload: Record<string, string> = {};
+    if (staffEditName.trim() && staffEditName.trim() !== selectedRep.name) {
+      payload.name = staffEditName.trim();
+    }
+    if (staffEditEmail.trim().toLowerCase() && staffEditEmail.trim().toLowerCase() !== selectedRep.email.toLowerCase()) {
+      payload.email = staffEditEmail.trim().toLowerCase();
+    }
+    if (staffEditPassword.trim()) {
+      payload.password = staffEditPassword.trim();
+    }
+
+    if (Object.keys(payload).length === 0) {
+      setStaffMessage("No changes to save.");
+      return;
+    }
+
+    setStaffLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/sales-reps/${selectedRep.id}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const body = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setStaffMessage(body?.message ?? `Update sales rep failed (${response.status}).`);
+        return;
+      }
+
+      setStaffEditPassword("");
+      setStaffMessage("Sales rep updated.");
+      await Promise.all([loadStaffData(token), loadMeta(token), loadDashboard(token)]);
+    } catch {
+      setStaffMessage("Update sales rep request failed.");
+    } finally {
+      setStaffLoading(false);
+    }
+  };
+
+  const handleDeactivateStaffSalesRep = async (rep: StaffSalesRepRow) => {
+    if (!token || !isAdmin) {
+      return;
+    }
+
+    const reassignToken = staffDeactivateTargetByRepId[rep.id]?.trim() ?? "";
+    const payload = reassignToken ? { reassignToSalesRepId: Number.parseInt(reassignToken, 10) } : {};
+
+    setStaffLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/sales-reps/${rep.id}/deactivate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const body = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setStaffMessage(body?.message ?? `Deactivate sales rep failed (${response.status}).`);
+        return;
+      }
+
+      setStaffMessage(body?.message ?? "Sales rep deactivated.");
+      await Promise.all([loadStaffData(token), loadMeta(token), loadContacts(token), loadDashboard(token)]);
+    } catch {
+      setStaffMessage("Deactivate sales rep request failed.");
+    } finally {
+      setStaffLoading(false);
+    }
+  };
+
+  const handleReactivateStaffSalesRep = async (salesRepId: number) => {
+    if (!token || !isAdmin) {
+      return;
+    }
+
+    setStaffLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/sales-reps/${salesRepId}/reactivate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      const body = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setStaffMessage(body?.message ?? `Reactivate sales rep failed (${response.status}).`);
+        return;
+      }
+
+      setStaffMessage(body?.message ?? "Sales rep reactivated.");
+      await Promise.all([loadStaffData(token), loadMeta(token), loadDashboard(token)]);
+    } catch {
+      setStaffMessage("Reactivate sales rep request failed.");
+    } finally {
+      setStaffLoading(false);
+    }
+  };
+
+  const handleAssignSelectedCustomers = async () => {
+    if (!token || !isAdmin) {
+      return;
+    }
+    if (!staffAssignTargetSalesRepId) {
+      setStaffMessage("Select target sales rep first.");
+      return;
+    }
+    if (staffSelectedCustomerIds.length === 0) {
+      setStaffMessage("Select at least one customer.");
+      return;
+    }
+
+    setStaffLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/customers/assign-bulk`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          salesRepId: Number.parseInt(staffAssignTargetSalesRepId, 10),
+          customerIds: staffSelectedCustomerIds
+        })
+      });
+
+      const body = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setStaffMessage(body?.message ?? `Customer assignment failed (${response.status}).`);
+        return;
+      }
+
+      setStaffMessage(body?.message ?? "Customers assigned.");
+      await Promise.all([loadStaffData(token), loadContacts(token), loadDashboard(token)]);
+    } catch {
+      setStaffMessage("Customer assignment request failed.");
+    } finally {
+      setStaffLoading(false);
     }
   };
 
@@ -2061,6 +2391,12 @@ function App() {
       await loadCategories(body.accessToken);
       await loadTopProducts(body.accessToken);
       await loadDashboard(body.accessToken);
+      if (body.user.role === "admin") {
+        await loadStaffData(body.accessToken);
+      } else {
+        setStaffSalesReps([]);
+        setStaffCustomers([]);
+      }
     } catch {
       setToken(null);
       setUser(null);
@@ -2165,6 +2501,21 @@ function App() {
     setCustomerImportLoading(false);
     setProductImportLoading(false);
     setOrderImportLoading(false);
+    setStaffSalesReps([]);
+    setStaffCustomers([]);
+    setStaffMessage("Staff not loaded yet.");
+    setStaffCreateName("");
+    setStaffCreateEmail("");
+    setStaffCreatePassword("");
+    setStaffEditSalesRepId("");
+    setStaffEditName("");
+    setStaffEditEmail("");
+    setStaffEditPassword("");
+    setStaffDeactivateTargetByRepId({});
+    setStaffCustomerNameFilter("");
+    setStaffCustomerCurrentRepFilter("");
+    setStaffSelectedCustomerIds([]);
+    setStaffAssignTargetSalesRepId("");
   };
 
   if (!isLoggedIn) {
@@ -2760,6 +3111,205 @@ function App() {
                     </article>
                   ))}
                 </div>
+              </article>
+            </div>
+          )}
+
+          {activeTab === "staff" && isAdmin && (
+            <div className="workspace-grid">
+              <article className="panel">
+                <h2>Staff controls</h2>
+                <button type="button" onClick={() => token && loadStaffData(token)} disabled={staffLoading}>
+                  {staffLoading ? "Loading..." : "Refresh staff data"}
+                </button>
+
+                <h3>Create salesman</h3>
+                <label>
+                  Name
+                  <input value={staffCreateName} onChange={(event) => setStaffCreateName(event.target.value)} />
+                </label>
+                <label>
+                  Email
+                  <input value={staffCreateEmail} onChange={(event) => setStaffCreateEmail(event.target.value)} />
+                </label>
+                <label>
+                  Password
+                  <input type="password" value={staffCreatePassword} onChange={(event) => setStaffCreatePassword(event.target.value)} />
+                </label>
+                <button type="button" onClick={handleCreateStaffSalesRep} disabled={staffLoading}>
+                  Create salesman
+                </button>
+
+                <h3>Edit salesman</h3>
+                <label>
+                  Select salesman
+                  <select value={staffEditSalesRepId} onChange={(event) => handleLoadSalesRepToEdit(event.target.value)}>
+                    <option value="">Select</option>
+                    {staffSalesReps.map((rep) => (
+                      <option key={`edit-rep-${rep.id}`} value={rep.id}>
+                        {rep.name} ({rep.isActive ? "active" : "inactive"})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Name
+                  <input value={staffEditName} onChange={(event) => setStaffEditName(event.target.value)} />
+                </label>
+                <label>
+                  Email
+                  <input value={staffEditEmail} onChange={(event) => setStaffEditEmail(event.target.value)} />
+                </label>
+                <label>
+                  New password (optional)
+                  <input type="password" value={staffEditPassword} onChange={(event) => setStaffEditPassword(event.target.value)} />
+                </label>
+                <button type="button" onClick={handleUpdateStaffSalesRep} disabled={staffLoading || !staffEditSalesRepId}>
+                  Save salesman
+                </button>
+                <p className="message">{staffMessage}</p>
+              </article>
+
+              <article className="panel">
+                <h2>Salesmen ({staffSalesReps.length})</h2>
+                <div className="customer-list">
+                  {staffSalesReps.map((rep) => (
+                    <article className="customer-card" key={`staff-rep-${rep.id}`}>
+                      <h3>{rep.name}</h3>
+                      <p>
+                        Email: <strong>{rep.email}</strong>
+                      </p>
+                      <p>
+                        Status: <strong>{rep.isActive ? "active" : "inactive"}</strong>
+                      </p>
+                      <p>
+                        Active customers: <strong>{rep.activeCustomerCount}</strong>
+                      </p>
+                      <p>
+                        Created: <strong>{new Date(rep.createdAt).toLocaleDateString()}</strong>
+                      </p>
+
+                      <div className="actions">
+                        <button type="button" onClick={() => handleLoadSalesRepToEdit(String(rep.id))} disabled={staffLoading}>
+                          Edit
+                        </button>
+                        {rep.isActive ? (
+                          <>
+                            <select
+                              value={staffDeactivateTargetByRepId[rep.id] ?? ""}
+                              onChange={(event) =>
+                                setStaffDeactivateTargetByRepId((prev) => ({
+                                  ...prev,
+                                  [rep.id]: event.target.value
+                                }))
+                              }
+                              disabled={staffLoading}
+                            >
+                              <option value="">Deactivate without reassignment</option>
+                              {staffActiveSalesReps
+                                .filter((candidate) => candidate.id !== rep.id)
+                                .map((candidate) => (
+                                  <option key={`deactivate-target-${rep.id}-${candidate.id}`} value={candidate.id}>
+                                    Reassign to {candidate.name}
+                                  </option>
+                                ))}
+                            </select>
+                            <button type="button" onClick={() => handleDeactivateStaffSalesRep(rep)} disabled={staffLoading}>
+                              Cancel salesman
+                            </button>
+                          </>
+                        ) : (
+                          <button type="button" onClick={() => handleReactivateStaffSalesRep(rep.id)} disabled={staffLoading}>
+                            Reactivate
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel">
+                <h2>Assign customers</h2>
+                <label>
+                  Filter by customer name
+                  <input value={staffCustomerNameFilter} onChange={(event) => setStaffCustomerNameFilter(event.target.value)} />
+                </label>
+                <label>
+                  Filter by current salesman
+                  <select value={staffCustomerCurrentRepFilter} onChange={(event) => setStaffCustomerCurrentRepFilter(event.target.value)}>
+                    <option value="">All</option>
+                    <option value="unassigned">Unassigned</option>
+                    {staffSalesReps.map((rep) => (
+                      <option key={`staff-current-rep-filter-${rep.id}`} value={rep.id}>
+                        {rep.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Assign selected customers to
+                  <select value={staffAssignTargetSalesRepId} onChange={(event) => setStaffAssignTargetSalesRepId(event.target.value)}>
+                    <option value="">Select active salesman</option>
+                    {staffActiveSalesReps.map((rep) => (
+                      <option key={`assign-target-${rep.id}`} value={rep.id}>
+                        {rep.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="actions">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setStaffSelectedCustomerIds((prev) => [
+                        ...new Set([...prev, ...staffFilteredCustomers.map((customer) => customer.id)])
+                      ])
+                    }
+                    disabled={staffFilteredCustomers.length === 0}
+                  >
+                    Select filtered
+                  </button>
+                  <button type="button" onClick={() => setStaffSelectedCustomerIds([])} disabled={staffSelectedCustomerIds.length === 0}>
+                    Clear selection
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAssignSelectedCustomers}
+                    disabled={staffLoading || !staffAssignTargetSalesRepId || staffSelectedCustomerIds.length === 0}
+                  >
+                    Assign selected ({staffSelectedCustomerIds.length})
+                  </button>
+                </div>
+
+                <div className="multi-checklist staff-customer-checklist">
+                  {staffFilteredCustomers.map((customer) => {
+                    const checked = staffSelectedCustomerIds.includes(customer.id);
+                    const currentRep = customer.currentAssignment?.salesRep.name ?? "Unassigned";
+                    return (
+                      <label key={`staff-customer-${customer.id}`} className="inline-check">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => {
+                            setStaffSelectedCustomerIds((prev) => {
+                              if (event.target.checked) {
+                                return [...prev, customer.id];
+                              }
+                              return prev.filter((id) => id !== customer.id);
+                            });
+                          }}
+                        />
+                        <span>
+                          {customer.name} ({currentRep})
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="hint">
+                  Showing {staffFilteredCustomers.length} of {staffCustomers.length} customers.
+                </p>
               </article>
             </div>
           )}

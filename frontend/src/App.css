@@ -414,6 +414,10 @@ button:disabled {
   font-size: 0.92rem;
 }
 
+.staff-customer-checklist {
+  max-height: 340px;
+}
+
 .dialog-backdrop {
   position: fixed;
   inset: 0;

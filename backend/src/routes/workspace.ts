@@ -170,6 +170,7 @@ workspaceRouter.get("/meta", async (req, res) => {
     prisma.user.findMany({
       where: {
         role: "sales_rep",
+        isActive: true,
         ...(authUser.role === "admin" ? {} : { id: authUser.userId })
       },
       orderBy: { name: "asc" },
@@ -1072,6 +1073,7 @@ workspaceRouter.get("/dashboard", async (req, res) => {
   const salesReps = await prisma.user.findMany({
     where: {
       role: "sales_rep",
+      isActive: true,
       ...(authUser.role === "admin" ? {} : { id: authUser.userId })
     },
     select: {

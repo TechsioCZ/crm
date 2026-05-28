@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { OrderItemType, Prisma } from "@prisma/client";
+import bcrypt from "bcryptjs";
 import { XMLParser } from "fast-xml-parser";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
@@ -12,12 +13,41 @@ const customerIdParamSchema = z.object({
   customerId: z.coerce.number().int().positive()
 });
 
+const salesRepIdParamSchema = z.object({
+  salesRepId: z.coerce.number().int().positive()
+});
+
 const importRunIdParamSchema = z.object({
   importRunId: z.coerce.number().int().positive()
 });
 
 const assignPayloadSchema = z.object({
   salesRepId: z.coerce.number().int().positive()
+});
+
+const bulkAssignPayloadSchema = z.object({
+  customerIds: z.array(z.coerce.number().int().positive()).min(1).max(1000),
+  salesRepId: z.coerce.number().int().positive()
+});
+
+const createSalesRepPayloadSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  email: z.email(),
+  password: z.string().min(6).max(120)
+});
+
+const updateSalesRepPayloadSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    email: z.email().optional(),
+    password: z.string().min(6).max(120).optional()
+  })
+  .refine((value) => value.name !== undefined || value.email !== undefined || value.password !== undefined, {
+    message: "At least one field must be provided."
+  });
+
+const deactivateSalesRepPayloadSchema = z.object({
+  reassignToSalesRepId: z.coerce.number().int().positive().optional()
 });
 
 const importXmlPayloadSchema = z.object({
@@ -373,6 +403,45 @@ export const adminRouter = Router();
 adminRouter.use(requireAuth);
 adminRouter.use(requireRole("admin"));
 
+adminRouter.post("/sales-reps", async (req, res) => {
+  const parsed = createSalesRepPayloadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "Invalid sales rep payload." });
+    return;
+  }
+
+  const email = parsed.data.email.trim().toLowerCase();
+  const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+
+  try {
+    const created = await prisma.user.create({
+      data: {
+        name: parsed.data.name,
+        email,
+        passwordHash,
+        role: "sales_rep",
+        isActive: true
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        isActive: true,
+        createdAt: true
+      }
+    });
+
+    res.status(201).json({ salesRep: created });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      res.status(409).json({ message: "Email already exists." });
+      return;
+    }
+
+    throw error;
+  }
+});
+
 adminRouter.get("/sales-reps", async (_req, res) => {
   const salesReps = await prisma.user.findMany({
     where: { role: "sales_rep" },
@@ -380,7 +449,9 @@ adminRouter.get("/sales-reps", async (_req, res) => {
     select: {
       id: true,
       name: true,
-      email: true
+      email: true,
+      isActive: true,
+      createdAt: true
     }
   });
 
@@ -402,6 +473,219 @@ adminRouter.get("/sales-reps", async (_req, res) => {
   }));
 
   res.json({ salesReps: response });
+});
+
+adminRouter.patch("/sales-reps/:salesRepId", async (req, res) => {
+  const paramParsed = salesRepIdParamSchema.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ message: "Invalid sales rep id." });
+    return;
+  }
+
+  const bodyParsed = updateSalesRepPayloadSchema.safeParse(req.body);
+  if (!bodyParsed.success) {
+    res.status(400).json({ message: "Invalid sales rep update payload." });
+    return;
+  }
+
+  const salesRepId = paramParsed.data.salesRepId;
+  const updateData: Prisma.UserUpdateInput = {};
+
+  if (bodyParsed.data.name !== undefined) {
+    updateData.name = bodyParsed.data.name;
+  }
+  if (bodyParsed.data.email !== undefined) {
+    updateData.email = bodyParsed.data.email.trim().toLowerCase();
+  }
+  if (bodyParsed.data.password !== undefined) {
+    updateData.passwordHash = await bcrypt.hash(bodyParsed.data.password, 10);
+  }
+
+  const salesRep = await prisma.user.findFirst({
+    where: {
+      id: salesRepId,
+      role: "sales_rep"
+    },
+    select: {
+      id: true
+    }
+  });
+  if (!salesRep) {
+    res.status(404).json({ message: "Sales rep not found." });
+    return;
+  }
+
+  try {
+    const updated = await prisma.user.update({
+      where: {
+        id: salesRepId
+      },
+      data: updateData,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        isActive: true,
+        createdAt: true
+      }
+    });
+
+    res.json({ salesRep: updated });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      res.status(409).json({ message: "Email already exists." });
+      return;
+    }
+
+    throw error;
+  }
+});
+
+adminRouter.post("/sales-reps/:salesRepId/deactivate", async (req, res) => {
+  const paramParsed = salesRepIdParamSchema.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ message: "Invalid sales rep id." });
+    return;
+  }
+
+  const bodyParsed = deactivateSalesRepPayloadSchema.safeParse(req.body ?? {});
+  if (!bodyParsed.success) {
+    res.status(400).json({ message: "Invalid deactivation payload." });
+    return;
+  }
+
+  const salesRepId = paramParsed.data.salesRepId;
+  const reassignToSalesRepId = bodyParsed.data.reassignToSalesRepId;
+  if (reassignToSalesRepId !== undefined && reassignToSalesRepId === salesRepId) {
+    res.status(400).json({ message: "Cannot reassign customers to the same sales rep." });
+    return;
+  }
+
+  const sourceSalesRep = await prisma.user.findFirst({
+    where: {
+      id: salesRepId,
+      role: "sales_rep"
+    },
+    select: {
+      id: true,
+      isActive: true
+    }
+  });
+  if (!sourceSalesRep) {
+    res.status(404).json({ message: "Sales rep not found." });
+    return;
+  }
+
+  if (reassignToSalesRepId !== undefined) {
+    const targetSalesRep = await prisma.user.findFirst({
+      where: {
+        id: reassignToSalesRepId,
+        role: "sales_rep",
+        isActive: true
+      },
+      select: { id: true }
+    });
+    if (!targetSalesRep) {
+      res.status(400).json({ message: "Replacement sales rep not found or inactive." });
+      return;
+    }
+  }
+
+  const activeAssignments = await prisma.customerAssignment.findMany({
+    where: {
+      salesRepId,
+      endedAt: null
+    },
+    select: {
+      id: true,
+      customerId: true
+    }
+  });
+
+  const activeCustomerIds = [...new Set(activeAssignments.map((row) => row.customerId))];
+  const assignedById = req.authUser!.userId;
+
+  await prisma.$transaction(async (tx) => {
+    const now = new Date();
+
+    if (activeAssignments.length > 0) {
+      await tx.customerAssignment.updateMany({
+        where: {
+          id: {
+            in: activeAssignments.map((row) => row.id)
+          }
+        },
+        data: {
+          endedAt: now
+        }
+      });
+    }
+
+    if (reassignToSalesRepId !== undefined && activeCustomerIds.length > 0) {
+      await tx.customerAssignment.createMany({
+        data: activeCustomerIds.map((customerId) => ({
+          customerId,
+          salesRepId: reassignToSalesRepId,
+          assignedById,
+          startedAt: now
+        }))
+      });
+    }
+
+    await tx.user.update({
+      where: { id: salesRepId },
+      data: { isActive: false }
+    });
+  });
+
+  res.json({
+    message: sourceSalesRep.isActive ? "Sales rep deactivated." : "Sales rep remains inactive.",
+    endedAssignments: activeCustomerIds.length,
+    reassignedAssignments: reassignToSalesRepId ? activeCustomerIds.length : 0
+  });
+});
+
+adminRouter.post("/sales-reps/:salesRepId/reactivate", async (req, res) => {
+  const paramParsed = salesRepIdParamSchema.safeParse(req.params);
+  if (!paramParsed.success) {
+    res.status(400).json({ message: "Invalid sales rep id." });
+    return;
+  }
+
+  const salesRep = await prisma.user.findFirst({
+    where: {
+      id: paramParsed.data.salesRepId,
+      role: "sales_rep"
+    },
+    select: {
+      id: true
+    }
+  });
+  if (!salesRep) {
+    res.status(404).json({ message: "Sales rep not found." });
+    return;
+  }
+
+  const updated = await prisma.user.update({
+    where: {
+      id: paramParsed.data.salesRepId
+    },
+    data: {
+      isActive: true
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      isActive: true,
+      createdAt: true
+    }
+  });
+
+  res.json({
+    message: "Sales rep reactivated.",
+    salesRep: updated
+  });
 });
 
 adminRouter.get("/customers", async (_req, res) => {
@@ -470,12 +754,13 @@ adminRouter.post("/customers/:customerId/assign", async (req, res) => {
   const salesRep = await prisma.user.findFirst({
     where: {
       id: salesRepId,
-      role: "sales_rep"
+      role: "sales_rep",
+      isActive: true
     }
   });
 
   if (!salesRep) {
-    res.status(400).json({ message: "Sales rep not found." });
+    res.status(400).json({ message: "Sales rep not found or inactive." });
     return;
   }
 
@@ -567,6 +852,111 @@ adminRouter.post("/customers/:customerId/assign", async (req, res) => {
 
     throw error;
   }
+});
+
+adminRouter.post("/customers/assign-bulk", async (req, res) => {
+  const bodyParsed = bulkAssignPayloadSchema.safeParse(req.body);
+  if (!bodyParsed.success) {
+    res.status(400).json({ message: "Invalid bulk assignment payload." });
+    return;
+  }
+
+  const assignedById = req.authUser!.userId;
+  const salesRepId = bodyParsed.data.salesRepId;
+  const customerIds = [...new Set(bodyParsed.data.customerIds)];
+
+  const salesRep = await prisma.user.findFirst({
+    where: {
+      id: salesRepId,
+      role: "sales_rep",
+      isActive: true
+    },
+    select: {
+      id: true
+    }
+  });
+  if (!salesRep) {
+    res.status(400).json({ message: "Sales rep not found or inactive." });
+    return;
+  }
+
+  const existingCustomers = await prisma.customer.findMany({
+    where: {
+      id: {
+        in: customerIds
+      }
+    },
+    select: {
+      id: true
+    }
+  });
+  const existingCustomerIds = new Set(existingCustomers.map((row) => row.id));
+  const missingCustomerIds = customerIds.filter((id) => !existingCustomerIds.has(id));
+  if (missingCustomerIds.length > 0) {
+    res.status(400).json({
+      message: `Some customers were not found: ${missingCustomerIds.slice(0, 10).join(", ")}`
+    });
+    return;
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const now = new Date();
+    let changed = 0;
+    let unchanged = 0;
+
+    for (const customerId of customerIds) {
+      const activeAssignments = await tx.customerAssignment.findMany({
+        where: {
+          customerId,
+          endedAt: null
+        },
+        orderBy: {
+          startedAt: "desc"
+        },
+        select: {
+          id: true,
+          salesRepId: true
+        }
+      });
+
+      if (activeAssignments[0]?.salesRepId === salesRepId) {
+        unchanged += 1;
+        continue;
+      }
+
+      if (activeAssignments.length > 0) {
+        await tx.customerAssignment.updateMany({
+          where: {
+            id: {
+              in: activeAssignments.map((assignment) => assignment.id)
+            }
+          },
+          data: {
+            endedAt: now
+          }
+        });
+      }
+
+      await tx.customerAssignment.create({
+        data: {
+          customerId,
+          salesRepId,
+          assignedById,
+          startedAt: now
+        }
+      });
+      changed += 1;
+    }
+
+    return { changed, unchanged };
+  });
+
+  res.json({
+    changed: result.changed,
+    unchanged: result.unchanged,
+    totalRequested: customerIds.length,
+    message: `Bulk assignment done (${result.changed} changed, ${result.unchanged} unchanged).`
+  });
 });
 
 adminRouter.post("/imports/customers/xml", async (req, res) => {
